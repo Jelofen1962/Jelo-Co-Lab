@@ -1,0 +1,60 @@
+{
+  "name": "collab-mvp-extension",
+  "displayName": "Collab MVP",
+  "description": "Simple collaborative coding MVP",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:collab.start",
+    "onCommand:collab.setConfig"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "collab.start",
+        "title": "Collab: Start"
+      },
+      {
+        "command": "collab.setConfig",
+        "title": "Collab: Set Config"
+      }
+    ],
+    "configuration": {
+      "title": "Collab MVP",
+      "properties": {
+        "collab.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Collab server URL"
+        },
+        "collab.workspaceId": {
+          "type": "string",
+          "default": "demo-workspace",
+          "description": "Shared workspace ID"
+        },
+        "collab.userId": {
+          "type": "string",
+          "default": "user-a",
+          "description": "Unique user ID"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5"
+  }
+}

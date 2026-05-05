@@ -1,0 +1,24 @@
+{
+  "workspaces": {
+    "demo-workspace": {
+      "files": {
+        "index.txt": {
+          "version": 4,
+          "updatedAt": 1777991197844,
+          "updatedBy": "user-b"
+        },
+        "index.html": {
+          "version": 1,
+          "updatedAt": 1777991179271,
+          "updatedBy": "user-a"
+        }
+      },
+      "locks": {
+        "index.txt": {
+          "userId": "user-b",
+          "timestamp": 1777991267931
+        }
+      }
+    }
+  }
+}
