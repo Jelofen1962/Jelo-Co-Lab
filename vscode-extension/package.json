@@ -1,8 +1,8 @@
 {
-  "name": "collab-mvp-extension",
-  "displayName": "Collab MVP",
-  "description": "Simple collaborative coding MVP",
-  "version": "0.0.1",
+  "name": "jelofen-co-lab",
+  "displayName": "Jelofen's Co-lab",
+  "description": "Simple collaborative coding",
+  "version": "0.0.3",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -55,6 +55,10 @@
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
   }
 }

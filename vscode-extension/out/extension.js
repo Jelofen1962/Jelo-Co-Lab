@@ -4,328 +4,175 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = require("vscode");
 const path = require("path");
-let syncTimer;
-let heartbeatTimer;
-let isStarted = false;
-let suppressLocalChanges = false;
-const dirtyFiles = new Set();
-const localVersions = new Map();
-const lockedByMe = new Set();
-const readOnlyFiles = new Set();
-let lastSyncTs = 0;
+const WebSocket = require("ws");
+let ws;
+let isApplyingRemote = false;
+let currentFilePath;
+// Decoration types for remote user cursors
+const cursorDecorations = new Map();
 function getConfig() {
     const config = vscode.workspace.getConfiguration("collab");
     return {
-        serverUrl: String(config.get("serverUrl") || "http://localhost:3000"),
+        serverUrl: String(config.get("serverUrl") || "ws://localhost:3000"),
         workspaceId: String(config.get("workspaceId") || "demo-workspace"),
-        userId: String(config.get("userId") || "user-a")
+        userId: String(config.get("userId") || "user-a"),
     };
-}
-async function apiGet(url) {
-    const res = await fetch(url);
-    if (!res.ok)
-        throw new Error(await res.text());
-    const data = (await res.json()); // ← FIX: assert instead of assign
-    return data;
-}
-async function apiPost(url, body) {
-    const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-    });
-    const text = await res.text();
-    let data;
-    try {
-        data = text ? JSON.parse(text) : {};
-    }
-    catch {
-        throw new Error(`Invalid JSON from server: ${text}`);
-    }
-    if (!res.ok) {
-        throw new Error(data.error || text || "Unknown error");
-    }
-    return data;
 }
 function getWorkspaceRoot() {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 function toRelativePath(doc) {
     const root = getWorkspaceRoot();
-    if (!root)
+    if (!root || doc.uri.scheme !== "file")
         return undefined;
-    if (doc.uri.scheme !== "file")
-        return undefined;
-    const fsPath = doc.uri.fsPath;
-    const rel = path.relative(root, fsPath).replace(/\\/g, "/");
+    const rel = path.relative(root, doc.uri.fsPath).replace(/\\/g, "/");
     if (rel.startsWith(".."))
         return undefined;
     return rel;
 }
-async function setConfig() {
-    const current = getConfig();
-    const serverUrl = await vscode.window.showInputBox({
-        prompt: "Server URL",
-        value: current.serverUrl
-    });
-    if (!serverUrl)
-        return;
-    const workspaceId = await vscode.window.showInputBox({
-        prompt: "Workspace ID",
-        value: current.workspaceId
-    });
-    if (!workspaceId)
-        return;
-    const userId = await vscode.window.showInputBox({
-        prompt: "User ID",
-        value: current.userId
-    });
-    if (!userId)
-        return;
-    const cfg = vscode.workspace.getConfiguration("collab");
-    await cfg.update("serverUrl", serverUrl, vscode.ConfigurationTarget.Workspace);
-    await cfg.update("workspaceId", workspaceId, vscode.ConfigurationTarget.Workspace);
-    await cfg.update("userId", userId, vscode.ConfigurationTarget.Workspace);
-    vscode.window.showInformationMessage("Collab config saved.");
-}
-async function acquireLockForActiveEditor() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor)
-        return;
+async function joinFile(editor) {
     const rel = toRelativePath(editor.document);
     if (!rel)
         return;
-    const { serverUrl, workspaceId, userId } = getConfig();
-    try {
-        const result = await apiPost(`${serverUrl}/lock/acquire`, {
+    currentFilePath = rel;
+    const { workspaceId, userId } = getConfig();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "join",
             workspaceId,
             userId,
-            filePath: rel
+            filePath: rel,
+        }));
+    }
+}
+function updateRemoteCursor(userId, color, line, character, selectionLength = 0) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor)
+        return;
+    if (!cursorDecorations.has(userId)) {
+        const decorationType = vscode.window.createTextEditorDecorationType({
+            border: `2px solid ${color}`,
+            borderWidth: "0 0 0 2px",
+            backgroundColor: selectionLength > 0 ? `${color}33` : undefined,
+            after: {
+                contentText: ` ${userId} `,
+                backgroundColor: color,
+                color: "#fff",
+                margin: "0 0 0 2px",
+            },
         });
-        if (result.locked) {
-            lockedByMe.add(rel);
-            readOnlyFiles.delete(rel);
-            vscode.window.setStatusBarMessage(`$(lock) Lock acquired: ${rel}`, 2000);
-        }
-        else {
-            lockedByMe.delete(rel);
-            readOnlyFiles.add(rel);
-            vscode.window.showWarningMessage(`File is locked by ${result.owner}. Read-only mode enforced for ${rel}`);
-        }
+        cursorDecorations.set(userId, decorationType);
     }
-    catch (e) {
-        vscode.window.showErrorMessage(`Lock acquire failed: ${e.message}`);
-    }
+    const decorationType = cursorDecorations.get(userId);
+    const range = new vscode.Range(line, character, line, character + selectionLength);
+    editor.setDecorations(decorationType, [range]);
 }
-async function heartbeatLocks() {
-    const { serverUrl, workspaceId, userId } = getConfig();
-    for (const rel of [...lockedByMe]) {
-        try {
-            const result = await apiPost(`${serverUrl}/lock/heartbeat`, {
-                workspaceId,
-                userId,
-                filePath: rel
-            });
-            if (!result.held) {
-                lockedByMe.delete(rel);
-                readOnlyFiles.add(rel);
-            }
-        }
-        catch {
-            // ignore transient
-        }
-    }
-}
-async function releaseAllLocks() {
-    const { serverUrl, workspaceId, userId } = getConfig();
-    for (const rel of [...lockedByMe]) {
-        try {
-            await apiPost(`${serverUrl}/lock/release`, {
-                workspaceId,
-                userId,
-                filePath: rel
-            });
-        }
-        catch {
-            // ignore
-        }
-    }
-    lockedByMe.clear();
-}
-async function pushDirtyFiles() {
-    const { serverUrl, workspaceId, userId } = getConfig();
-    for (const rel of [...dirtyFiles]) {
-        const doc = vscode.workspace.textDocuments.find(d => toRelativePath(d) === rel);
-        if (!doc)
-            continue;
-        if (readOnlyFiles.has(rel)) {
-            continue;
-        }
-        try {
-            const version = localVersions.get(rel) ?? 0;
-            const result = await apiPost(`${serverUrl}/file/push`, {
-                workspaceId,
-                userId,
-                filePath: rel,
-                content: doc.getText(),
-                version
-            });
-            localVersions.set(rel, result.version);
-            dirtyFiles.delete(rel);
-            lastSyncTs = Math.max(lastSyncTs, result.updatedAt || 0);
-        }
-        catch (e) {
-            if (String(e.message).includes("Version conflict")) {
-                vscode.window.showWarningMessage(`Conflict on ${rel}. Pulling remote version.`);
-                await pullChanges();
-            }
-            else if (String(e.message).includes("locked")) {
-                readOnlyFiles.add(rel);
-                vscode.window.showWarningMessage(`Push denied. ${rel} is not locked by you.`);
-            }
-        }
-    }
-}
-async function writeFileFromServer(rel, content, version) {
-    const root = getWorkspaceRoot();
-    if (!root)
-        return;
-    const uri = vscode.Uri.file(path.join(root, rel));
-    const edit = new vscode.WorkspaceEdit();
-    try {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        suppressLocalChanges = true;
-        const fullRange = new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length));
-        edit.replace(uri, fullRange, content);
-        await vscode.workspace.applyEdit(edit);
-        await doc.save();
-        localVersions.set(rel, version);
-        dirtyFiles.delete(rel);
-    }
-    catch {
-        suppressLocalChanges = true;
-        edit.createFile(uri, { ignoreIfExists: true, overwrite: true });
-        edit.insert(uri, new vscode.Position(0, 0), content);
-        await vscode.workspace.applyEdit(edit);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await doc.save();
-        localVersions.set(rel, version);
-        dirtyFiles.delete(rel);
-    }
-    finally {
-        setTimeout(() => {
-            suppressLocalChanges = false;
-        }, 200);
-    }
-}
-async function pullChanges() {
-    const { serverUrl, workspaceId, userId } = getConfig();
-    try {
-        const result = await apiGet(`${serverUrl}/changes?workspaceId=${encodeURIComponent(workspaceId)}&since=${lastSyncTs}`);
-        for (const file of result.files || []) {
-            if (file.updatedBy === userId) {
-                localVersions.set(file.filePath, file.version);
-                lastSyncTs = Math.max(lastSyncTs, file.updatedAt || 0);
-                continue;
-            }
-            if (dirtyFiles.has(file.filePath)) {
-                vscode.window.showWarningMessage(`Remote update skipped for dirty local file ${file.filePath}. Resolve manually.`);
-                lastSyncTs = Math.max(lastSyncTs, file.updatedAt || 0);
-                continue;
-            }
-            await writeFileFromServer(file.filePath, file.content, file.version);
-            lastSyncTs = Math.max(lastSyncTs, file.updatedAt || 0);
-        }
-    }
-    catch (e) {
-        vscode.window.showErrorMessage(`Pull failed: ${e.message}`);
-    }
-}
-async function revertIfReadOnly(doc) {
-    const rel = toRelativePath(doc);
-    if (!rel)
-        return;
-    if (!readOnlyFiles.has(rel))
-        return;
-    suppressLocalChanges = true;
-    try {
-        await vscode.commands.executeCommand("workbench.action.files.revert");
-        vscode.window.showWarningMessage(`Read-only enforced. Reverted changes in ${rel}`);
-    }
-    finally {
-        setTimeout(() => {
-            suppressLocalChanges = false;
-        }, 200);
-    }
-}
-async function initialSync() {
-    const { serverUrl, workspaceId } = getConfig();
-    await apiPost(`${serverUrl}/workspace/init`, { workspaceId });
-    const manifest = await apiGet(`${serverUrl}/manifest?workspaceId=${encodeURIComponent(workspaceId)}`);
-    for (const [rel, meta] of Object.entries(manifest.files || {})) {
-        localVersions.set(rel, meta.version);
-        lastSyncTs = Math.max(lastSyncTs, meta.updatedAt || 0);
-    }
-    const userId = getConfig().userId;
-    for (const [rel, lock] of Object.entries(manifest.locks || {})) {
-        if (lock.userId !== userId) {
-            readOnlyFiles.add(rel);
-        }
-    }
-    await pullChanges();
-}
-async function start() {
-    if (isStarted) {
-        vscode.window.showInformationMessage("Collab already started.");
-        return;
-    }
-    try {
-        await initialSync();
-        syncTimer = setInterval(async () => {
-            await pushDirtyFiles();
-            await pullChanges();
-        }, 5000);
-        heartbeatTimer = setInterval(async () => {
-            await heartbeatLocks();
-        }, 5000);
-        isStarted = true;
-        vscode.window.showInformationMessage("Collab MVP started.");
-    }
-    catch (e) {
-        vscode.window.showErrorMessage(`Failed to start Collab: ${e.message}`);
+function removeRemoteCursor(userId) {
+    const decorationType = cursorDecorations.get(userId);
+    if (decorationType) {
+        const editor = vscode.window.activeTextEditor;
+        if (editor)
+            editor.setDecorations(decorationType, []);
+        decorationType.dispose();
+        cursorDecorations.delete(userId);
     }
 }
 function activate(context) {
-    context.subscriptions.push(vscode.commands.registerCommand("collab.setConfig", setConfig), vscode.commands.registerCommand("collab.start", start), vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-        if (!editor)
-            return;
-        await acquireLockForActiveEditor();
-    }), vscode.workspace.onDidChangeTextDocument(async (event) => {
-        if (suppressLocalChanges)
+    const startCommand = vscode.commands.registerCommand("collab.start", () => {
+        const { serverUrl } = getConfig();
+        const wsUrl = serverUrl.replace("http", "ws");
+        ws = new WebSocket(wsUrl);
+        ws.on("open", () => {
+            vscode.window.showInformationMessage("Connected to Collab Server.");
+            if (vscode.window.activeTextEditor) {
+                joinFile(vscode.window.activeTextEditor);
+            }
+        });
+        ws.on("message", async (data) => {
+            const msg = JSON.parse(data.toString());
+            if (msg.type === "init") {
+                isApplyingRemote = true;
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
+                    await editor.edit((editBuilder) => {
+                        editBuilder.replace(fullRange, msg.content);
+                    });
+                }
+                isApplyingRemote = false;
+            }
+            if (msg.type === "edit") {
+                isApplyingRemote = true;
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    await editor.edit((editBuilder) => {
+                        for (const change of msg.changes) {
+                            const range = new vscode.Range(change.range[0].line, change.range[0].character, change.range[1].line, change.range[1].character);
+                            editBuilder.replace(range, change.text);
+                        }
+                    });
+                }
+                isApplyingRemote = false;
+            }
+            if (msg.type === "cursor") {
+                updateRemoteCursor(msg.userId, msg.color, msg.line, msg.character, msg.selectionLength);
+            }
+            if (msg.type === "leave") {
+                removeRemoteCursor(msg.userId);
+            }
+        });
+        ws.on("close", () => {
+            vscode.window.showErrorMessage("Disconnected from Collab Server.");
+        });
+    });
+    context.subscriptions.push(startCommand);
+    // Handle local text changes
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => {
+        if (isApplyingRemote || !ws || ws.readyState !== WebSocket.OPEN)
             return;
         const rel = toRelativePath(event.document);
-        if (!rel)
+        if (rel !== currentFilePath)
             return;
-        if (readOnlyFiles.has(rel)) {
-            await revertIfReadOnly(event.document);
+        const changes = event.contentChanges.map((c) => ({
+            text: c.text,
+            range: [
+                { line: c.range.start.line, character: c.range.start.character },
+                { line: c.range.end.line, character: c.range.end.character },
+            ],
+        }));
+        ws.send(JSON.stringify({
+            type: "edit",
+            changes,
+            fullContent: event.document.getText(),
+        }));
+    }));
+    // Handle local cursor moves
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection((event) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN)
             return;
+        const rel = toRelativePath(event.textEditor.document);
+        if (rel !== currentFilePath)
+            return;
+        const selection = event.selections[0];
+        ws.send(JSON.stringify({
+            type: "cursor",
+            line: selection.active.line,
+            character: selection.active.character,
+            selectionLength: Math.abs(selection.active.character - selection.anchor.character),
+        }));
+    }));
+    // Handle file switching
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor) {
+            cursorDecorations.forEach((dec) => dec.dispose());
+            cursorDecorations.clear();
+            joinFile(editor);
         }
-        dirtyFiles.add(rel);
-    }), {
-        dispose: () => {
-            if (syncTimer)
-                clearInterval(syncTimer);
-            if (heartbeatTimer)
-                clearInterval(heartbeatTimer);
-            releaseAllLocks();
-        }
-    });
+    }));
 }
 function deactivate() {
-    if (syncTimer)
-        clearInterval(syncTimer);
-    if (heartbeatTimer)
-        clearInterval(heartbeatTimer);
-    releaseAllLocks();
+    if (ws)
+        ws.close();
+    cursorDecorations.forEach((dec) => dec.dispose());
 }
 //# sourceMappingURL=extension.js.map

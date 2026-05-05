@@ -13,12 +13,7 @@
           "updatedBy": "user-a"
         }
       },
-      "locks": {
-        "index.txt": {
-          "userId": "user-b",
-          "timestamp": 1777991267931
-        }
-      }
+      "locks": {}
     }
   }
 }

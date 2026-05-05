@@ -1,12 +1,13 @@
 {
-  "name": "collab-server-mvp",
-  "version": "1.0.0",
+  "name": "jelofen-co-lab",
+  "version": "1.0.2",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "ws": "^8.20.0"
   }
 }
