@@ -6,8 +6,40 @@ let ws: WebSocket | undefined;
 let isApplyingRemote = false;
 let currentFilePath: string | undefined;
 
+async function setConfig() {
+  const current = getConfig();
+
+  const serverUrl = await vscode.window.showInputBox({
+    prompt: "Server URL (ws://...)",
+    value: current.serverUrl
+  });
+  if (!serverUrl) return;
+
+  const workspaceId = await vscode.window.showInputBox({
+    prompt: "Workspace ID",
+    value: current.workspaceId
+  });
+  if (!workspaceId) return;
+
+  const userId = await vscode.window.showInputBox({
+    prompt: "User ID",
+    value: current.userId
+  });
+  if (!userId) return;
+
+  const cfg = vscode.workspace.getConfiguration("collab");
+
+  await cfg.update("serverUrl", serverUrl, vscode.ConfigurationTarget.Workspace);
+  await cfg.update("workspaceId", workspaceId, vscode.ConfigurationTarget.Workspace);
+  await cfg.update("userId", userId, vscode.ConfigurationTarget.Workspace);
+
+  vscode.window.showInformationMessage("Collab configuration saved.");
+}
+
+
 // Decoration types for remote user cursors
 const cursorDecorations = new Map<string, vscode.TextEditorDecorationType>();
+
 
 function getConfig() {
   const config = vscode.workspace.getConfiguration("collab");
@@ -164,8 +196,10 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showErrorMessage("Disconnected from Collab Server.");
     });
   });
+  const configCommand = vscode.commands.registerCommand("collab.setConfig", setConfig);
 
-  context.subscriptions.push(startCommand);
+  context.subscriptions.push(startCommand, configCommand);
+
 
   // Handle local text changes
   context.subscriptions.push(

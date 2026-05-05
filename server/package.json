@@ -2,12 +2,19 @@
   "name": "jelofen-co-lab",
   "version": "1.0.2",
   "main": "index.js",
+  "bin": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "build:exe": "pkg . --targets node18-win-x64 --output dist/collab-server.exe"
   },
   "dependencies": {
     "express": "^4.19.2",
     "ws": "^8.20.0"
+  },
+  "pkg": {
+    "scripts": [
+      "index.js"
+    ]
   }
 }
