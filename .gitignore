@@ -5,3 +5,5 @@ vscode-extension/history/
 vscode-extension/out/
 
 *.vsix
+*.zip
+*.rar
