@@ -30,7 +30,6 @@ const clients = new Map();
 const saveTimeouts = new Map();
 const rateLimits = new Map();
 
-// Fix: Store tokens per workspace
 const workspaceTokens = new Map();
 
 function getRandomColor() {
@@ -86,9 +85,8 @@ wss.on("connection", (ws) => {
       if (data.type === "join") {
         if (!data.workspaceId || !data.userId || !data.filePath) return;
 
-        // Fix: Custom shared Auth Key
         if (!workspaceTokens.has(data.workspaceId)) {
-          workspaceTokens.set(data.workspaceId, data.token); // First one sets the token
+          workspaceTokens.set(data.workspaceId, data.token);
         } else if (workspaceTokens.get(data.workspaceId) !== data.token) {
           ws.send(
             JSON.stringify({
@@ -99,7 +97,6 @@ wss.on("connection", (ws) => {
           return;
         }
 
-        // Fix: Prevent User Duplication
         for (const [existingWs, info] of clients.entries()) {
           if (
             info.workspaceId === data.workspaceId &&
@@ -154,7 +151,6 @@ wss.on("connection", (ws) => {
         });
       }
 
-      // Fix: Handle Push/Sync files on Server
       if (data.type === "file_created" || data.type === "sync_file") {
         const clientInfo = clients.get(ws);
         if (!clientInfo) return;
@@ -243,7 +239,6 @@ function handleLeave(ws) {
   rateLimits.delete(ws);
 }
 
-// Broadcasts to users in the same file
 function broadcast(senderWs, message) {
   const senderInfo = clients.get(senderWs);
   if (!senderInfo) return;
@@ -261,7 +256,6 @@ function broadcast(senderWs, message) {
   }
 }
 
-// Fix: Broadcast to ALL users in the workspace (for syncing whole folders)
 function broadcastWorkspace(senderWs, message) {
   const senderInfo = clients.get(senderWs);
   if (!senderInfo) return;

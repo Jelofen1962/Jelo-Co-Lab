@@ -8,12 +8,11 @@ let isApplyingRemote = false;
 let currentFilePath: string | undefined;
 let reconnectTimer: NodeJS.Timeout | undefined;
 let reconnectAttempts = 0;
-let isManualDisconnect = false; // Fix: Flag to prevent auto-reconnect on manual disconnect
+let isManualDisconnect = false;
 
 let connectionStatusBar: vscode.StatusBarItem;
 let workspaceStatusBar: vscode.StatusBarItem;
 
-// Decoration types for remote user cursors
 const cursorDecorations = new Map<string, vscode.TextEditorDecorationType>();
 
 function shouldSyncPath(relativePath: string): boolean {
@@ -121,7 +120,7 @@ async function joinFile(editor: vscode.TextEditor) {
   const rel = toRelativePath(editor.document);
   if (!rel) return;
   if (!rel || !shouldSyncPath(rel)) {
-    return; // skip if rel is undefined or path shouldn't sync
+    return; 
   }
 
   currentFilePath = rel;
@@ -193,7 +192,7 @@ function connect() {
   const wsUrl = serverUrl.replace("http", "ws");
 
   updateStatusBar("Connecting");
-  isManualDisconnect = false; // Reset flag
+  isManualDisconnect = false;
   ws = new WebSocket(wsUrl);
 
   ws.on("open", () => {
@@ -209,7 +208,6 @@ function connect() {
       const msg = JSON.parse(data.toString());
       const editor = vscode.window.activeTextEditor;
 
-      // Handle push/sync files Fix
       if (msg.type === "file_created" || msg.type === "sync_file") {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) return;
@@ -230,7 +228,6 @@ function connect() {
               isRemoteAction = false;
             }
           } catch {
-            // File doesn't exist locally
             isRemoteAction = true;
             await vscode.workspace.fs.writeFile(fileUri, contentUint8);
             isRemoteAction = false;
@@ -309,7 +306,6 @@ function connect() {
     cursorDecorations.forEach((dec) => dec.dispose());
     cursorDecorations.clear();
 
-    // Fix: Only auto-reconnect if it wasn't a manual disconnect
     if (!isManualDisconnect) {
       reconnectAttempts++;
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
@@ -364,7 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
     "collab.disconnect",
     () => {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        isManualDisconnect = true; // Fix: Mark as manual disconnect
+        isManualDisconnect = true; 
         ws.close();
         clearTimeout(reconnectTimer);
         vscode.window.showInformationMessage(
@@ -385,7 +381,7 @@ export function activate(context: vscode.ExtensionContext) {
       const relativePath = vscode.workspace.asRelativePath(file);
 
       if (!shouldSyncPath(relativePath)) {
-        continue; // never sync .vscode or its children
+        continue;
       }
 
       const fileData = await vscode.workspace.fs.readFile(file);
@@ -420,7 +416,6 @@ export function activate(context: vscode.ExtensionContext) {
           const fileUri = vscode.Uri.joinPath(dirUri, name);
           const relativePath = vscode.workspace.asRelativePath(fileUri);
 
-          // Skip .vscode and everything under it
           if (!shouldSyncPath(relativePath)) {
             continue;
           }
@@ -466,7 +461,7 @@ export function activate(context: vscode.ExtensionContext) {
       const rel = toRelativePath(event.document);
       if (rel !== currentFilePath) return;
       if (!rel || !shouldSyncPath(rel)) {
-        return; // skip if rel is undefined or path shouldn't sync
+        return; 
       }
 
       const changes = event.contentChanges.map((c) => ({
@@ -495,7 +490,7 @@ export function activate(context: vscode.ExtensionContext) {
       const rel = toRelativePath(event.textEditor.document);
       if (rel !== currentFilePath) return;
       if (!rel || !shouldSyncPath(rel)) {
-        return; // skip if rel is undefined or path shouldn't sync
+        return; 
       }
 
       const selection = event.selections[0];
