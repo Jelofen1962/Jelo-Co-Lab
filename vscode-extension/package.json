@@ -1,7 +1,7 @@
 {
   "name": "jelofen-co-lab",
   "displayName": "Jelofen's Co-lab",
-  "description": "Simple collaborative coding",
+  "description": "Jelofen's simple Co-Lab self-hosted server + extension (vscode) which is made with Love ;)",
   "version": "1.5.2",
   "publisher": "local",
   "engines": {
@@ -20,29 +20,29 @@
     "commands": [
       {
         "command": "collab.start",
-        "title": "Collab: Start Connection"
+        "title": "Jelo Co-Lab: Start Connection"
       },
       {
         "command": "collab.setConfig",
-        "title": "Collab: Set Configuration"
+        "title": "Jelo Co-Lab: Set Configuration"
       },
       {
         "command": "collab.disconnect",
-        "title": "Collab: Disconnect"
+        "title": "Jelo Co-Lab: Disconnect"
       },
       {
         "command": "collab.pushDir",
-        "title": "Collab: Push/Sync Directory"
+        "title": "Jelo Co-Lab: Push/Sync Directory"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "Collab",
+      "title": "Jelo Co-Lab",
       "properties": {
         "collab.serverUrl": {
           "type": "string",
           "default": "ws://localhost:3000",
-          "description": "WebSocket URL of the collab server"
+          "description": "WebSocket URL of the Jelo Co-Lab server"
         },
         "collab.workspaceId": {
           "type": "string",

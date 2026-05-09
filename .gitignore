@@ -1,0 +1,7 @@
+server/node_modules/
+vscode-extension/node_modules/
+vscode-extension/history/
+vscode-extension/history/
+vscode-extension/out/
+
+*.vsix
