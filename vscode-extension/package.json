@@ -2,7 +2,7 @@
   "name": "jelofen-co-lab",
   "displayName": "Jelofen's Co-lab",
   "description": "Simple collaborative coding",
-  "version": "1.0.0",
+  "version": "1.5.2",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -27,8 +27,12 @@
         "title": "Collab: Set Configuration"
       },
       {
-        "command": "collab.quickStart",
-        "title": "Collab: Quick Start (Local Server)"
+        "command": "collab.disconnect",
+        "title": "Collab: Disconnect"
+      },
+      {
+        "command": "collab.pushDir",
+        "title": "Collab: Push/Sync Directory"
       }
     ],
     "configuration": {

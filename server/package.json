@@ -1,6 +1,6 @@
 {
   "name": "jelofen-co-lab",
-  "version": "1.9.1",
+  "version": "1.5.2",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {

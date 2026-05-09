@@ -26,12 +26,12 @@ function getAbsoluteFilePath(workspaceId, relPath) {
   return path.join(WORKSPACES_DIR, workspaceId, safe);
 }
 
-// Track connected clients
 const clients = new Map();
-// Simple debounce map for file saves: Map<string (workspace+path), NodeJS.Timeout>
 const saveTimeouts = new Map();
-// Simple rate limiting: Map<ws, { tokens, lastRefill }>
 const rateLimits = new Map();
+
+// Fix: Store tokens per workspace
+const workspaceTokens = new Map();
 
 function getRandomColor() {
   const colors = [
@@ -57,7 +57,7 @@ function checkRateLimit(ws) {
   }
   const rl = rateLimits.get(ws);
   const timePassed = now - rl.lastRefill;
-  rl.tokens = Math.min(50, rl.tokens + timePassed * 0.05); // 50 msg/sec max replenish
+  rl.tokens = Math.min(50, rl.tokens + timePassed * 0.05);
   rl.lastRefill = now;
 
   if (rl.tokens < 1) return false;
@@ -74,25 +74,22 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // Max Payload check for WS
     if (message.length > 5 * 1024 * 1024) {
-      // 5MB Limit
       ws.send(JSON.stringify({ type: "error", message: "Payload too large" }));
       return;
     }
 
     try {
       const data = JSON.parse(message);
-
-      // Basic validation
       if (!data.type) return;
 
       if (data.type === "join") {
         if (!data.workspaceId || !data.userId || !data.filePath) return;
 
-        // Simple Auth Demo: Require token to match workspaceId (mocking shared secret)
-        // In real app, check against a DB. Here we just enforce it exists.
-        if (data.token !== `${data.workspaceId}-secret` && data.token !== "") {
+        // Fix: Custom shared Auth Key
+        if (!workspaceTokens.has(data.workspaceId)) {
+          workspaceTokens.set(data.workspaceId, data.token); // First one sets the token
+        } else if (workspaceTokens.get(data.workspaceId) !== data.token) {
           ws.send(
             JSON.stringify({
               type: "error",
@@ -100,6 +97,24 @@ wss.on("connection", (ws) => {
             }),
           );
           return;
+        }
+
+        // Fix: Prevent User Duplication
+        for (const [existingWs, info] of clients.entries()) {
+          if (
+            info.workspaceId === data.workspaceId &&
+            info.userId === data.userId &&
+            existingWs !== ws
+          ) {
+            existingWs.send(
+              JSON.stringify({
+                type: "error",
+                message: "Logged in from another location",
+              }),
+            );
+            existingWs.close();
+            clients.delete(existingWs);
+          }
         }
 
         const color = getRandomColor();
@@ -139,6 +154,24 @@ wss.on("connection", (ws) => {
         });
       }
 
+      // Fix: Handle Push/Sync files on Server
+      if (data.type === "file_created" || data.type === "sync_file") {
+        const clientInfo = clients.get(ws);
+        if (!clientInfo) return;
+
+        const abs = getAbsoluteFilePath(clientInfo.workspaceId, data.path);
+        await fsp.mkdir(path.dirname(abs), { recursive: true });
+        await fsp.writeFile(abs, Buffer.from(data.content));
+
+        broadcastWorkspace(ws, {
+          type: data.type,
+          path: data.path,
+          mtime: data.mtime,
+          content: data.content,
+        });
+        log("SYNC_FILE", { user: clientInfo.userId, file: data.path });
+      }
+
       if (data.type === "edit") {
         const clientInfo = clients.get(ws);
         if (!clientInfo || clientInfo.filePath !== data.filePath) return;
@@ -150,7 +183,6 @@ wss.on("connection", (ws) => {
           changes: data.changes,
         });
 
-        // Debounced Save
         const fileKey = `${clientInfo.workspaceId}:${clientInfo.filePath}`;
         if (saveTimeouts.has(fileKey)) clearTimeout(saveTimeouts.get(fileKey));
 
@@ -170,7 +202,7 @@ wss.on("connection", (ws) => {
             }
             saveTimeouts.delete(fileKey);
           }, 800),
-        ); // 800ms debounce
+        );
       }
 
       if (data.type === "cursor") {
@@ -211,6 +243,7 @@ function handleLeave(ws) {
   rateLimits.delete(ws);
 }
 
+// Broadcasts to users in the same file
 function broadcast(senderWs, message) {
   const senderInfo = clients.get(senderWs);
   if (!senderInfo) return;
@@ -222,6 +255,23 @@ function broadcast(senderWs, message) {
       clientWs.readyState === WebSocket.OPEN &&
       info.workspaceId === senderInfo.workspaceId &&
       info.filePath === senderInfo.filePath
+    ) {
+      clientWs.send(msgStr);
+    }
+  }
+}
+
+// Fix: Broadcast to ALL users in the workspace (for syncing whole folders)
+function broadcastWorkspace(senderWs, message) {
+  const senderInfo = clients.get(senderWs);
+  if (!senderInfo) return;
+
+  const msgStr = JSON.stringify(message);
+  for (const [clientWs, info] of clients.entries()) {
+    if (
+      clientWs !== senderWs &&
+      clientWs.readyState === WebSocket.OPEN &&
+      info.workspaceId === senderInfo.workspaceId
     ) {
       clientWs.send(msgStr);
     }

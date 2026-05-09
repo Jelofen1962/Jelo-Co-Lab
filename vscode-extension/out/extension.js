@@ -6,14 +6,20 @@ const vscode = require("vscode");
 const path = require("path");
 const WebSocket = require("ws");
 let ws;
+let isRemoteAction = false;
 let isApplyingRemote = false;
 let currentFilePath;
 let reconnectTimer;
 let reconnectAttempts = 0;
+let isManualDisconnect = false; // Fix: Flag to prevent auto-reconnect on manual disconnect
 let connectionStatusBar;
 let workspaceStatusBar;
 // Decoration types for remote user cursors
 const cursorDecorations = new Map();
+function shouldSyncPath(relativePath) {
+    const p = relativePath.replace(/\\/g, "/");
+    return !p.startsWith(".vscode/");
+}
 function getConfig() {
     const config = vscode.workspace.getConfiguration("collab");
     return {
@@ -25,16 +31,28 @@ function getConfig() {
 }
 async function setConfig() {
     const current = getConfig();
-    const serverUrl = await vscode.window.showInputBox({ prompt: "Server URL (ws://...)", value: current.serverUrl });
+    const serverUrl = await vscode.window.showInputBox({
+        prompt: "Server URL (ws://...)",
+        value: current.serverUrl,
+    });
     if (!serverUrl)
         return;
-    const workspaceId = await vscode.window.showInputBox({ prompt: "Workspace ID", value: current.workspaceId });
+    const workspaceId = await vscode.window.showInputBox({
+        prompt: "Workspace ID",
+        value: current.workspaceId,
+    });
     if (!workspaceId)
         return;
-    const token = await vscode.window.showInputBox({ prompt: "Workspace Token (Secret)", value: current.token });
+    const token = await vscode.window.showInputBox({
+        prompt: "Workspace Token (Secret)",
+        value: current.token,
+    });
     if (token === undefined)
         return;
-    const userId = await vscode.window.showInputBox({ prompt: "User ID", value: current.userId });
+    const userId = await vscode.window.showInputBox({
+        prompt: "User ID",
+        value: current.userId,
+    });
     if (!userId)
         return;
     const cfg = vscode.workspace.getConfiguration("collab");
@@ -49,7 +67,9 @@ function getWorkspaceRoot(docUri) {
     if (!docUri)
         return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const folder = vscode.workspace.getWorkspaceFolder(docUri);
-    return folder ? folder.uri.fsPath : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    return folder
+        ? folder.uri.fsPath
+        : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 function toRelativePath(doc) {
     const root = getWorkspaceRoot(doc.uri);
@@ -71,11 +91,11 @@ function updateStatusBar(status = "Disconnected") {
     }
     else if (status === "Connecting") {
         connectionStatusBar.text = `$(sync~spin) Collab: Reconnecting...`;
-        connectionStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        connectionStatusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
     }
     else {
         connectionStatusBar.text = `$(circle-slash) Collab: Disconnected`;
-        connectionStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+        connectionStatusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
     }
     connectionStatusBar.show();
 }
@@ -83,6 +103,9 @@ async function joinFile(editor) {
     const rel = toRelativePath(editor.document);
     if (!rel)
         return;
+    if (!rel || !shouldSyncPath(rel)) {
+        return; // skip if rel is undefined or path shouldn't sync
+    }
     currentFilePath = rel;
     const { workspaceId, userId, token } = getConfig();
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -128,12 +151,14 @@ function removeRemoteCursor(userId) {
     }
 }
 function connect() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    if (ws &&
+        (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         return;
     }
     const { serverUrl } = getConfig();
     const wsUrl = serverUrl.replace("http", "ws");
     updateStatusBar("Connecting");
+    isManualDisconnect = false; // Reset flag
     ws = new WebSocket(wsUrl);
     ws.on("open", () => {
         reconnectAttempts = 0;
@@ -146,8 +171,40 @@ function connect() {
         try {
             const msg = JSON.parse(data.toString());
             const editor = vscode.window.activeTextEditor;
-            // Safety Check: Ensure active file matches message file path
-            if (msg.filePath && editor && toRelativePath(editor.document) !== msg.filePath) {
+            // Handle push/sync files Fix
+            if (msg.type === "file_created" || msg.type === "sync_file") {
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders)
+                    return;
+                const rootUri = workspaceFolders[0].uri;
+                const fileUri = vscode.Uri.joinPath(rootUri, msg.path);
+                const contentUint8 = new Uint8Array(msg.content);
+                if (msg.type === "file_created") {
+                    isRemoteAction = true;
+                    await vscode.workspace.fs.writeFile(fileUri, contentUint8);
+                    isRemoteAction = false;
+                }
+                else if (msg.type === "sync_file") {
+                    try {
+                        const localStat = await vscode.workspace.fs.stat(fileUri);
+                        if (msg.mtime > localStat.mtime) {
+                            isRemoteAction = true;
+                            await vscode.workspace.fs.writeFile(fileUri, contentUint8);
+                            isRemoteAction = false;
+                        }
+                    }
+                    catch {
+                        // File doesn't exist locally
+                        isRemoteAction = true;
+                        await vscode.workspace.fs.writeFile(fileUri, contentUint8);
+                        isRemoteAction = false;
+                    }
+                }
+                return;
+            }
+            if (msg.filePath &&
+                editor &&
+                toRelativePath(editor.document) !== msg.filePath) {
                 return;
             }
             if (msg.type === "init" && editor) {
@@ -189,11 +246,13 @@ function connect() {
         updateStatusBar("Disconnected");
         cursorDecorations.forEach((dec) => dec.dispose());
         cursorDecorations.clear();
-        // Exponential backoff reconnect
-        reconnectAttempts++;
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(connect, delay);
+        // Fix: Only auto-reconnect if it wasn't a manual disconnect
+        if (!isManualDisconnect) {
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connect, delay);
+        }
     });
 }
 function activate(context) {
@@ -210,17 +269,83 @@ function activate(context) {
         await cfg.update("userId", process.env.USER || process.env.USERNAME || "user", vscode.ConfigurationTarget.Workspace);
         connect();
     });
-    context.subscriptions.push(startCommand, configCommand, quickStartCommand);
+    let disconnectCmd = vscode.commands.registerCommand("collab.disconnect", () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            isManualDisconnect = true; // Fix: Mark as manual disconnect
+            ws.close();
+            clearTimeout(reconnectTimer);
+            vscode.window.showInformationMessage("Disconnected from Collab workspace.");
+        }
+        else {
+            vscode.window.showInformationMessage("Not currently connected.");
+        }
+    });
+    let fileCreateListener = vscode.workspace.onDidCreateFiles(async (event) => {
+        const currentWs = ws;
+        if (isRemoteAction || !currentWs || currentWs.readyState !== WebSocket.OPEN)
+            return;
+        for (const file of event.files) {
+            const relativePath = vscode.workspace.asRelativePath(file);
+            if (!shouldSyncPath(relativePath)) {
+                continue; // never sync .vscode or its children
+            }
+            const fileData = await vscode.workspace.fs.readFile(file);
+            currentWs.send(JSON.stringify({
+                type: "file_created",
+                path: relativePath,
+                content: Array.from(fileData),
+            }));
+        }
+    });
+    let pushDirCmd = vscode.commands.registerCommand("collab.pushDir", async () => {
+        const currentWs = ws;
+        if (!currentWs || currentWs.readyState !== WebSocket.OPEN) {
+            return vscode.window.showErrorMessage("Connect to collab first.");
+        }
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders)
+            return;
+        const rootUri = workspaceFolders[0].uri;
+        async function pushDirectory(dirUri) {
+            const entries = await vscode.workspace.fs.readDirectory(dirUri);
+            for (const [name, type] of entries) {
+                const fileUri = vscode.Uri.joinPath(dirUri, name);
+                const relativePath = vscode.workspace.asRelativePath(fileUri);
+                // Skip .vscode and everything under it
+                if (!shouldSyncPath(relativePath)) {
+                    continue;
+                }
+                if (type === vscode.FileType.Directory) {
+                    await pushDirectory(fileUri);
+                }
+                else if (type === vscode.FileType.File) {
+                    const stat = await vscode.workspace.fs.stat(fileUri);
+                    const content = await vscode.workspace.fs.readFile(fileUri);
+                    currentWs.send(JSON.stringify({
+                        type: "sync_file",
+                        path: relativePath,
+                        mtime: stat.mtime,
+                        content: Array.from(content),
+                    }));
+                }
+            }
+        }
+        vscode.window.showInformationMessage("Pushing directory...");
+        await pushDirectory(rootUri);
+    });
+    context.subscriptions.push(disconnectCmd, fileCreateListener, pushDirCmd, startCommand, configCommand, quickStartCommand);
     updateStatusBar();
-    // Handle local text changes
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => {
         if (isApplyingRemote || !ws || ws.readyState !== WebSocket.OPEN)
             return;
         if (event.document.isClosed || event.document.isUntitled)
-            return; // safety
+            return;
         const rel = toRelativePath(event.document);
         if (rel !== currentFilePath)
             return;
+        if (!rel || !shouldSyncPath(rel)) {
+            return; // skip if rel is undefined or path shouldn't sync
+        }
         const changes = event.contentChanges.map((c) => ({
             text: c.text,
             range: [
@@ -235,13 +360,15 @@ function activate(context) {
             fullContent: event.document.getText(),
         }));
     }));
-    // Handle local cursor moves
     context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection((event) => {
         if (!ws || ws.readyState !== WebSocket.OPEN)
             return;
         const rel = toRelativePath(event.textEditor.document);
         if (rel !== currentFilePath)
             return;
+        if (!rel || !shouldSyncPath(rel)) {
+            return; // skip if rel is undefined or path shouldn't sync
+        }
         const selection = event.selections[0];
         ws.send(JSON.stringify({
             type: "cursor",
@@ -252,7 +379,6 @@ function activate(context) {
             endChar: selection.active.character,
         }));
     }));
-    // Handle file switching
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor) {
             cursorDecorations.forEach((dec) => dec.dispose());
