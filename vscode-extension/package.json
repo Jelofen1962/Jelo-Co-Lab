@@ -2,7 +2,7 @@
   "name": "jelofen-co-lab",
   "displayName": "Jelofen's Co-lab",
   "description": "Simple collaborative coding",
-  "version": "0.0.3",
+  "version": "1.0.0",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -20,30 +20,40 @@
     "commands": [
       {
         "command": "collab.start",
-        "title": "Collab: Start"
+        "title": "Collab: Start Connection"
       },
       {
         "command": "collab.setConfig",
-        "title": "Collab: Set Config"
+        "title": "Collab: Set Configuration"
+      },
+      {
+        "command": "collab.quickStart",
+        "title": "Collab: Quick Start (Local Server)"
       }
     ],
     "configuration": {
-      "title": "Collab MVP",
+      "type": "object",
+      "title": "Collab",
       "properties": {
         "collab.serverUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
-          "description": "Collab server URL"
+          "default": "ws://localhost:3000",
+          "description": "WebSocket URL of the collab server"
         },
         "collab.workspaceId": {
           "type": "string",
           "default": "demo-workspace",
-          "description": "Shared workspace ID"
+          "description": "Workspace ID used to group collaborators"
         },
         "collab.userId": {
           "type": "string",
           "default": "user-a",
-          "description": "Unique user ID"
+          "description": "Your user ID displayed to others"
+        },
+        "collab.token": {
+          "type": "string",
+          "default": "",
+          "description": "Workspace token (shared secret)"
         }
       }
     }

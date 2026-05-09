@@ -1,0 +1,13 @@
+{
+  "collab.serverUrl": "http://localhost:3000",
+  "collab.workspaceId": "demo-workspace",
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true
+  },
+  "collab.token": "demo-workspace-passwordthinggy",
+  "collab.userId": "mmd"
+}

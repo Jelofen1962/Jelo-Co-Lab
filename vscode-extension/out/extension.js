@@ -8,32 +8,10 @@ const WebSocket = require("ws");
 let ws;
 let isApplyingRemote = false;
 let currentFilePath;
-async function setConfig() {
-    const current = getConfig();
-    const serverUrl = await vscode.window.showInputBox({
-        prompt: "Server URL (ws://...)",
-        value: current.serverUrl
-    });
-    if (!serverUrl)
-        return;
-    const workspaceId = await vscode.window.showInputBox({
-        prompt: "Workspace ID",
-        value: current.workspaceId
-    });
-    if (!workspaceId)
-        return;
-    const userId = await vscode.window.showInputBox({
-        prompt: "User ID",
-        value: current.userId
-    });
-    if (!userId)
-        return;
-    const cfg = vscode.workspace.getConfiguration("collab");
-    await cfg.update("serverUrl", serverUrl, vscode.ConfigurationTarget.Workspace);
-    await cfg.update("workspaceId", workspaceId, vscode.ConfigurationTarget.Workspace);
-    await cfg.update("userId", userId, vscode.ConfigurationTarget.Workspace);
-    vscode.window.showInformationMessage("Collab configuration saved.");
-}
+let reconnectTimer;
+let reconnectAttempts = 0;
+let connectionStatusBar;
+let workspaceStatusBar;
 // Decoration types for remote user cursors
 const cursorDecorations = new Map();
 function getConfig() {
@@ -42,13 +20,39 @@ function getConfig() {
         serverUrl: String(config.get("serverUrl") || "ws://localhost:3000"),
         workspaceId: String(config.get("workspaceId") || "demo-workspace"),
         userId: String(config.get("userId") || "user-a"),
+        token: String(config.get("token") || ""),
     };
 }
-function getWorkspaceRoot() {
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+async function setConfig() {
+    const current = getConfig();
+    const serverUrl = await vscode.window.showInputBox({ prompt: "Server URL (ws://...)", value: current.serverUrl });
+    if (!serverUrl)
+        return;
+    const workspaceId = await vscode.window.showInputBox({ prompt: "Workspace ID", value: current.workspaceId });
+    if (!workspaceId)
+        return;
+    const token = await vscode.window.showInputBox({ prompt: "Workspace Token (Secret)", value: current.token });
+    if (token === undefined)
+        return;
+    const userId = await vscode.window.showInputBox({ prompt: "User ID", value: current.userId });
+    if (!userId)
+        return;
+    const cfg = vscode.workspace.getConfiguration("collab");
+    await cfg.update("serverUrl", serverUrl, vscode.ConfigurationTarget.Workspace);
+    await cfg.update("workspaceId", workspaceId, vscode.ConfigurationTarget.Workspace);
+    await cfg.update("token", token, vscode.ConfigurationTarget.Workspace);
+    await cfg.update("userId", userId, vscode.ConfigurationTarget.Workspace);
+    vscode.window.showInformationMessage("Collab configuration saved.");
+    updateStatusBar();
+}
+function getWorkspaceRoot(docUri) {
+    if (!docUri)
+        return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const folder = vscode.workspace.getWorkspaceFolder(docUri);
+    return folder ? folder.uri.fsPath : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 function toRelativePath(doc) {
-    const root = getWorkspaceRoot();
+    const root = getWorkspaceRoot(doc.uri);
     if (!root || doc.uri.scheme !== "file")
         return undefined;
     const rel = path.relative(root, doc.uri.fsPath).replace(/\\/g, "/");
@@ -56,22 +60,42 @@ function toRelativePath(doc) {
         return undefined;
     return rel;
 }
+function updateStatusBar(status = "Disconnected") {
+    const { workspaceId, serverUrl } = getConfig();
+    workspaceStatusBar.text = `$(folder) ${workspaceId}`;
+    workspaceStatusBar.tooltip = `Server: ${serverUrl}`;
+    workspaceStatusBar.show();
+    if (status === "Connected") {
+        connectionStatusBar.text = `$(plug) Collab: Connected`;
+        connectionStatusBar.backgroundColor = undefined;
+    }
+    else if (status === "Connecting") {
+        connectionStatusBar.text = `$(sync~spin) Collab: Reconnecting...`;
+        connectionStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
+    else {
+        connectionStatusBar.text = `$(circle-slash) Collab: Disconnected`;
+        connectionStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    }
+    connectionStatusBar.show();
+}
 async function joinFile(editor) {
     const rel = toRelativePath(editor.document);
     if (!rel)
         return;
     currentFilePath = rel;
-    const { workspaceId, userId } = getConfig();
+    const { workspaceId, userId, token } = getConfig();
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: "join",
             workspaceId,
+            token,
             userId,
             filePath: rel,
         }));
     }
 }
-function updateRemoteCursor(userId, color, line, character, selectionLength = 0) {
+function updateRemoteCursor(userId, color, startLine, startChar, endLine, endChar) {
     const editor = vscode.window.activeTextEditor;
     if (!editor)
         return;
@@ -79,7 +103,7 @@ function updateRemoteCursor(userId, color, line, character, selectionLength = 0)
         const decorationType = vscode.window.createTextEditorDecorationType({
             border: `2px solid ${color}`,
             borderWidth: "0 0 0 2px",
-            backgroundColor: selectionLength > 0 ? `${color}33` : undefined,
+            backgroundColor: `${color}33`,
             after: {
                 contentText: ` ${userId} `,
                 backgroundColor: color,
@@ -90,7 +114,7 @@ function updateRemoteCursor(userId, color, line, character, selectionLength = 0)
         cursorDecorations.set(userId, decorationType);
     }
     const decorationType = cursorDecorations.get(userId);
-    const range = new vscode.Range(line, character, line, character + selectionLength);
+    const range = new vscode.Range(startLine, startChar, endLine, endChar);
     editor.setDecorations(decorationType, [range]);
 }
 function removeRemoteCursor(userId) {
@@ -103,60 +127,97 @@ function removeRemoteCursor(userId) {
         cursorDecorations.delete(userId);
     }
 }
-function activate(context) {
-    const startCommand = vscode.commands.registerCommand("collab.start", () => {
-        const { serverUrl } = getConfig();
-        const wsUrl = serverUrl.replace("http", "ws");
-        ws = new WebSocket(wsUrl);
-        ws.on("open", () => {
-            vscode.window.showInformationMessage("Connected to Collab Server.");
-            if (vscode.window.activeTextEditor) {
-                joinFile(vscode.window.activeTextEditor);
-            }
-        });
-        ws.on("message", async (data) => {
+function connect() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+    const { serverUrl } = getConfig();
+    const wsUrl = serverUrl.replace("http", "ws");
+    updateStatusBar("Connecting");
+    ws = new WebSocket(wsUrl);
+    ws.on("open", () => {
+        reconnectAttempts = 0;
+        updateStatusBar("Connected");
+        if (vscode.window.activeTextEditor) {
+            joinFile(vscode.window.activeTextEditor);
+        }
+    });
+    ws.on("message", async (data) => {
+        try {
             const msg = JSON.parse(data.toString());
-            if (msg.type === "init") {
+            const editor = vscode.window.activeTextEditor;
+            // Safety Check: Ensure active file matches message file path
+            if (msg.filePath && editor && toRelativePath(editor.document) !== msg.filePath) {
+                return;
+            }
+            if (msg.type === "init" && editor) {
                 isApplyingRemote = true;
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
-                    await editor.edit((editBuilder) => {
-                        editBuilder.replace(fullRange, msg.content);
-                    });
-                }
+                const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
+                await editor.edit((editBuilder) => {
+                    editBuilder.replace(fullRange, msg.content);
+                });
                 isApplyingRemote = false;
             }
-            if (msg.type === "edit") {
+            if (msg.type === "edit" && editor) {
                 isApplyingRemote = true;
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    await editor.edit((editBuilder) => {
-                        for (const change of msg.changes) {
-                            const range = new vscode.Range(change.range[0].line, change.range[0].character, change.range[1].line, change.range[1].character);
-                            editBuilder.replace(range, change.text);
-                        }
-                    });
-                }
+                await editor.edit((editBuilder) => {
+                    for (const change of msg.changes) {
+                        const range = new vscode.Range(change.range[0].line, change.range[0].character, change.range[1].line, change.range[1].character);
+                        editBuilder.replace(range, change.text);
+                    }
+                });
                 isApplyingRemote = false;
             }
             if (msg.type === "cursor") {
-                updateRemoteCursor(msg.userId, msg.color, msg.line, msg.character, msg.selectionLength);
+                updateRemoteCursor(msg.userId, msg.color, msg.startLine, msg.startChar, msg.endLine, msg.endChar);
             }
             if (msg.type === "leave") {
                 removeRemoteCursor(msg.userId);
             }
-        });
-        ws.on("close", () => {
-            vscode.window.showErrorMessage("Disconnected from Collab Server.");
-        });
+            if (msg.type === "error") {
+                vscode.window.showErrorMessage(`Collab Server: ${msg.message}`);
+            }
+        }
+        catch (e) {
+            console.error("Collab WS Error parsing message", e);
+        }
     });
+    ws.on("error", (error) => {
+        vscode.window.showWarningMessage(`Collab WebSocket Error: ${error.message}`);
+    });
+    ws.on("close", () => {
+        updateStatusBar("Disconnected");
+        cursorDecorations.forEach((dec) => dec.dispose());
+        cursorDecorations.clear();
+        // Exponential backoff reconnect
+        reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, delay);
+    });
+}
+function activate(context) {
+    connectionStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    workspaceStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    workspaceStatusBar.command = "collab.setConfig";
+    context.subscriptions.push(connectionStatusBar, workspaceStatusBar);
+    const startCommand = vscode.commands.registerCommand("collab.start", connect);
     const configCommand = vscode.commands.registerCommand("collab.setConfig", setConfig);
-    context.subscriptions.push(startCommand, configCommand);
+    const quickStartCommand = vscode.commands.registerCommand("collab.quickStart", async () => {
+        const cfg = vscode.workspace.getConfiguration("collab");
+        await cfg.update("serverUrl", "ws://localhost:3000", vscode.ConfigurationTarget.Workspace);
+        await cfg.update("workspaceId", vscode.workspace.name || "default", vscode.ConfigurationTarget.Workspace);
+        await cfg.update("userId", process.env.USER || process.env.USERNAME || "user", vscode.ConfigurationTarget.Workspace);
+        connect();
+    });
+    context.subscriptions.push(startCommand, configCommand, quickStartCommand);
+    updateStatusBar();
     // Handle local text changes
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => {
         if (isApplyingRemote || !ws || ws.readyState !== WebSocket.OPEN)
             return;
+        if (event.document.isClosed || event.document.isUntitled)
+            return; // safety
         const rel = toRelativePath(event.document);
         if (rel !== currentFilePath)
             return;
@@ -169,6 +230,7 @@ function activate(context) {
         }));
         ws.send(JSON.stringify({
             type: "edit",
+            filePath: rel,
             changes,
             fullContent: event.document.getText(),
         }));
@@ -183,9 +245,11 @@ function activate(context) {
         const selection = event.selections[0];
         ws.send(JSON.stringify({
             type: "cursor",
-            line: selection.active.line,
-            character: selection.active.character,
-            selectionLength: Math.abs(selection.active.character - selection.anchor.character),
+            filePath: rel,
+            startLine: selection.anchor.line,
+            startChar: selection.anchor.character,
+            endLine: selection.active.line,
+            endChar: selection.active.character,
         }));
     }));
     // Handle file switching
@@ -198,8 +262,11 @@ function activate(context) {
     }));
 }
 function deactivate() {
-    if (ws)
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "leave" }));
         ws.close();
+    }
+    clearTimeout(reconnectTimer);
     cursorDecorations.forEach((dec) => dec.dispose());
 }
 //# sourceMappingURL=extension.js.map
