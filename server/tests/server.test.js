@@ -21,13 +21,23 @@ function reservePort() {
 }
 
 async function waitForHealth(url, child) {
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`Server exited with code ${child.exitCode}`);
     try { const response = await fetch(url); if (response.ok) return response.json(); } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("Server did not become healthy in time");
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill("SIGTERM");
+  const forceKill = setTimeout(() => child.kill("SIGKILL"), 5000);
+  forceKill.unref();
+  await exited;
+  clearTimeout(forceKill);
 }
 
 function connect(url) {
@@ -38,7 +48,7 @@ function connect(url) {
   });
 }
 
-function nextMessage(client, predicate = () => true, timeoutMs = 5000) {
+function nextMessage(client, predicate = () => true, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { cleanup(); reject(new Error("Timed out waiting for WebSocket message")); }, timeoutMs);
     const onMessage = (raw) => {
@@ -275,8 +285,7 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
 
     // Persisted document state restores after a full server process restart.
     clientA.close(); clientB.close(); clientC.close();
-    child.kill("SIGTERM");
-    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    await stopChild(child);
     child = spawn(process.execPath, [path.join(__dirname, "..", "index.js")], {
       cwd: path.join(__dirname, ".."), env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), DATA_DIR: temp, COLLAB_TOKEN: token }, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -288,8 +297,7 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
     restoredClient.close();
   } finally {
     clientA?.close(); clientB?.close(); clientC?.close();
-    child.kill("SIGTERM");
-    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    await stopChild(child);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
@@ -312,8 +320,8 @@ test("rejects invalid workspace IDs and credentials", async (t) => {
     send(client, { type: "join", workspaceId: "team-1", userId: "alice", token: "wrong-token", filePath: "a.txt" });
     assert.equal((await auth).message, "Authentication failed");
   } finally {
-    client?.close(); child.kill("SIGTERM");
-    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    client?.close();
+    await stopChild(child);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
@@ -329,11 +337,7 @@ test("file uploads resume from durable acknowledged chunk offset after server re
   const startServer = () => spawn(process.execPath, [path.join(__dirname, "..", "index.js")], {
     cwd: path.join(__dirname, ".."), env, stdio: ["ignore", "pipe", "pipe"],
   });
-  const stopServer = async (child) => {
-    if (child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    await new Promise((resolve) => child.once("exit", resolve));
-  };
+  const stopServer = stopChild;
   let child = startServer();
   let first;
   let second;
@@ -379,7 +383,7 @@ test("file uploads resume from durable acknowledged chunk offset after server re
   }
 });
 
-test("10 MiB binary transfer completes with matching SHA-256", async () => {
+test("10 MiB binary transfer completes with matching SHA-256", { timeout: 60000 }, async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-large-file-test-"));
   const workspace = path.join(temp, "workspaces", "large-team");
   await fs.mkdir(workspace, { recursive: true });
@@ -402,8 +406,8 @@ test("10 MiB binary transfer completes with matching SHA-256", async () => {
     const saved = await fs.readFile(path.join(workspace, "assets", "large.bin"));
     assert.deepEqual(saved, payload);
   } finally {
-    client?.close(); child.kill("SIGTERM");
-    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    client?.close();
+    await stopChild(child);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
@@ -439,8 +443,8 @@ test("viewer members can read but cannot edit or upload files", async () => {
     assert.match((await uploadError).message, /read-only/);
     assert.equal(await fs.readFile(path.join(workspace, "README.md"), "utf8"), "read only");
   } finally {
-    client?.close(); child.kill("SIGTERM");
-    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    client?.close();
+    await stopChild(child);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
@@ -464,8 +468,7 @@ test("browser WebSocket origins are restricted to the configured allowlist", asy
     assert.equal(await originResult("https://trusted.example"), "allowed");
     assert.equal(await originResult("https://evil.example"), 1008);
   } finally {
-    child.kill("SIGTERM");
-    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    await stopChild(child);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });

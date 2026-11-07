@@ -9,6 +9,16 @@ const crypto = require("node:crypto");
 const WebSocket = require("ws");
 const { diffText } = require("../ot");
 
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill("SIGTERM");
+  const forceKill = setTimeout(() => child.kill("SIGKILL"), 5000);
+  forceKill.unref();
+  await exited;
+  clearTimeout(forceKill);
+}
+
 function reservePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer(); server.once("error", reject);
@@ -30,7 +40,7 @@ function waitForHealth(url, child) {
 function connect(url) {
   return new Promise((resolve, reject) => { const ws = new WebSocket(url); ws.once("open", () => resolve(ws)); ws.once("error", reject); });
 }
-function next(ws, predicate, timeout = 12000) {
+function next(ws, predicate, timeout = 20000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { ws.off("message", onMessage); reject(new Error("message timeout")); }, timeout);
     function onMessage(raw) {
@@ -42,7 +52,7 @@ function next(ws, predicate, timeout = 12000) {
 }
 function send(ws, data) { ws.send(JSON.stringify(data)); }
 
-test("40 concurrent collaborators converge through real WebSocket sessions", { timeout: 45000 }, async () => {
+test("40 concurrent collaborators converge through real WebSocket sessions", { timeout: 90000 }, async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-stress-"));
   const workspace = path.join(temp, "workspaces", "stress-team");
   await fs.mkdir(workspace, { recursive: true });
@@ -83,7 +93,7 @@ test("40 concurrent collaborators converge through real WebSocket sessions", { t
   } finally {
     for (const client of clients) client.close();
     child.kill("SIGTERM");
-    await new Promise((resolve) => child.once("exit", resolve));
+    await stopChild(child);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1] - CI test reliability patch
+
+- Run the Node test files serially in CI and local `npm test` to avoid resource contention between multiple server-spawning integration suites.
+- Extend WebSocket message and health-startup test timeouts for slower hosted runners.
+- Centralize child-process shutdown in tests, attach exit listeners before signaling, and force-kill only after a bounded graceful-shutdown window.
+- Increase the explicit timeout for the 10 MiB transfer integration test and 40-client stress test.
+
 ## [1.7.0] — Phase 3 and Phase 4 completion
 
 ### Added
