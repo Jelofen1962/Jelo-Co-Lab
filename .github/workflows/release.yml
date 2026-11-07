@@ -1,0 +1,71 @@
+name: Build and publish Jelo Co-Lab
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            vscode-extension/package-lock.json
+
+      - name: Verify tag matches package versions
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          node -e 'for (const file of ["server/package.json", "vscode-extension/package.json"]) { const p=require("./"+file); if (p.version !== process.argv[1]) { console.error(`${file}: ${p.version} != tag ${process.argv[1]}`); process.exit(1); } }' "$TAG_VERSION"
+
+      - name: Install and test server
+        working-directory: server
+        run: |
+          npm ci
+          npm run check
+          npm test
+
+      - name: Compile and package VS Code extension
+        working-directory: vscode-extension
+        run: |
+          npm ci
+          npm run compile
+          npx --yes @vscode/vsce package --out "jelofen-co-lab-${GITHUB_REF_NAME}.vsix"
+          test -s "jelofen-co-lab-${GITHUB_REF_NAME}.vsix"
+          unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -qx 'extension/node_modules/ws/package.json'
+          unzip -p "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" extension/package.json | node -e 'let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s); if (!p.dependencies?.ws) process.exit(1);});'
+
+      - name: Package server and checksums
+        run: |
+          mkdir -p dist/server
+          cp server/index.js server/security.js server/package.json server/package-lock.json server/README.md dist/server/
+          cp -R server/tests dist/server/tests
+          (cd dist && zip -X -r "jelo-colab-server-${GITHUB_REF_NAME}.zip" server)
+          sha256sum "dist/jelo-colab-server-${GITHUB_REF_NAME}.zip" > "dist/jelo-colab-server-${GITHUB_REF_NAME}.zip.sha256"
+          sha256sum "vscode-extension/jelofen-co-lab-${GITHUB_REF_NAME}.vsix" > "vscode-extension/jelofen-co-lab-${GITHUB_REF_NAME}.vsix.sha256"
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            vscode-extension/jelofen-co-lab-${{ github.ref_name }}.vsix
+            vscode-extension/jelofen-co-lab-${{ github.ref_name }}.vsix.sha256
+            dist/jelo-colab-server-${{ github.ref_name }}.zip
+            dist/jelo-colab-server-${{ github.ref_name }}.zip.sha256

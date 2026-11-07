@@ -1,9 +1,12 @@
 server/node_modules/
+server/data/
 vscode-extension/node_modules/
-vscode-extension/history/
-vscode-extension/history/
 vscode-extension/out/
-
+vscode-extension/history/
 *.vsix
 *.zip
 *.rar
+.env
+.env.*
+!.env.example
+.DS_Store

@@ -1,9 +1,9 @@
 {
   "name": "jelofen-co-lab",
   "displayName": "Jelofen's Co-lab",
-  "description": "Jelofen's simple Co-Lab self-hosted server + extension (vscode) which is made with Love ;)",
-  "version": "1.5.2",
-  "publisher": "local",
+  "description": "Self-hosted collaborative editing for VS Code",
+  "version": "1.5.4",
+  "publisher": "jelofen",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -13,7 +13,10 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:collab.start",
-    "onCommand:collab.setConfig"
+    "onCommand:collab.setConfig",
+    "onCommand:collab.quickStart",
+    "onCommand:collab.disconnect",
+    "onCommand:collab.pushDir"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -25,6 +28,10 @@
       {
         "command": "collab.setConfig",
         "title": "Jelo Co-Lab: Set Configuration"
+      },
+      {
+        "command": "collab.quickStart",
+        "title": "Jelo Co-Lab: Quick Start"
       },
       {
         "command": "collab.disconnect",
@@ -42,29 +49,26 @@
         "collab.serverUrl": {
           "type": "string",
           "default": "ws://localhost:3000",
-          "description": "WebSocket URL of the Jelo Co-Lab server"
+          "description": "WebSocket URL. Use wss:// for remote servers."
         },
         "collab.workspaceId": {
           "type": "string",
           "default": "demo-workspace",
-          "description": "Workspace ID used to group collaborators"
+          "description": "Shared workspace ID (1-64 letters, numbers, _ or -)."
         },
         "collab.userId": {
           "type": "string",
-          "default": "user-a",
-          "description": "Your user ID displayed to others"
-        },
-        "collab.token": {
-          "type": "string",
           "default": "",
-          "description": "Workspace token (shared secret)"
+          "description": "Unique collaborator ID. Generated automatically when empty."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
@@ -74,5 +78,13 @@
   },
   "dependencies": {
     "ws": "^8.20.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jelofen1962/Jelo-Co-Lab.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jelofen1962/Jelo-Co-Lab/issues"
+  },
+  "homepage": "https://github.com/Jelofen1962/Jelo-Co-Lab#readme"
 }

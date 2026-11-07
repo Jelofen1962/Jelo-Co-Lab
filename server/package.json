@@ -1,13 +1,27 @@
 {
-  "name": "jelofen-co-lab",
-  "version": "1.5.2",
+  "name": "jelofen-co-lab-server",
+  "version": "1.5.4",
+  "private": true,
+  "description": "Self-hosted WebSocket server for Jelo Co-Lab",
   "main": "index.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "check": "node --check index.js && node --check security.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "express": "^4.19.2",
     "ws": "^8.20.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jelofen1962/Jelo-Co-Lab.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jelofen1962/Jelo-Co-Lab/issues"
+  },
+  "homepage": "https://github.com/Jelofen1962/Jelo-Co-Lab#readme"
 }

@@ -1,0 +1,13 @@
+.vscode/**
+.vscode-test/**
+src/**
+tsconfig.json
+package-lock.json
+*.ts
+**/*.ts
+**/*.map
+node_modules/@types/**
+node_modules/typescript/**
+node_modules/undici-types/**
+node_modules/.bin/**
+node_modules/.package-lock.json
