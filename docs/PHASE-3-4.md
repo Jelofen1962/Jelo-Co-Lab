@@ -53,9 +53,9 @@ The server rotates `audit.jsonl` once it reaches 10 MiB, keeping the current and
 
 ### Release provenance and CI
 
-`ci.yml` runs server checks/tests on Ubuntu and VS Code Extension Host tests on Ubuntu, Windows and macOS. `release.yml` creates the VSIX and server ZIP from a version-matched tag, generates SHA-256 files, then creates GitHub build-provenance attestations for both main artifacts before publishing the GitHub Release.
+`ci.yml` runs server checks/tests on Ubuntu and VS Code Extension Host tests on Ubuntu and Windows. `release.yml` creates the VSIX and server ZIP from a version-matched tag, generates SHA-256 files, then creates GitHub build-provenance attestations for both main artifacts before publishing the GitHub Release.
 
-GitHub provenance attestation is not the same as a publisher-controlled Authenticode/macOS code-signing identity. Platform-specific code signing and a third-party security review remain separate release decisions.
+GitHub provenance attestation is not the same as publisher-controlled Windows Authenticode signing. Windows code signing and a third-party security review remain separate release decisions.
 
 ## Explicit constraints
 

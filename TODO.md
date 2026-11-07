@@ -1,8 +1,8 @@
 # Jelo Co-Lab delivery status and remaining TODO
 
-Version: 1.7.4
+Version: 1.7.5
 
-This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the cross-platform GitHub workflow or an independent security review has already run.
+This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the Windows and Ubuntu GitHub workflow or an independent security review has already run.
 
 ## Phase 1 — Security and release foundation
 
@@ -56,7 +56,7 @@ This checklist distinguishes implemented work from release gates that require a 
 - [x] Caddy TLS reverse-proxy setup script.
 - [x] Backup/restore scripts with checksums, path validation and pre-restore copies.
 - [x] Daily backup timer installer.
-- [x] CI workflow for server checks and Windows/macOS/Linux VS Code Extension Host tests.
+- [x] CI workflow for server checks and Windows and Ubuntu VS Code Extension Host tests (macOS intentionally unsupported).
 - [x] Release workflow with package-version gate, audit, VSIX/server ZIP, checksums and build provenance.
 - [x] MIT license, contribution guide, support guide and security policy.
 - [ ] Run GitHub CI on all three operating systems and retain passing run links.

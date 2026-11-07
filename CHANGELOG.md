@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.5] - Limit supported CI targets to Windows and Ubuntu
+
+- Run VS Code Extension Host tests on `windows-latest` and `ubuntu-latest` only; macOS is intentionally excluded.
+- Gate tagged releases on successful Extension Host test runs on both supported operating systems.
+- Keep Ubuntu headless testing under Xvfb and run Windows tests natively.
+- Bump server and extension package versions and lockfile root metadata to 1.7.5.
+
+## [1.7.5] - Restrict supported CI platforms to Windows and Ubuntu
+
+- Run VS Code Extension Host CI on `windows-latest` and `ubuntu-latest` only.
+- Remove macOS from the test matrix and platform claims; no macOS build or support is part of this release.
+- Keep Linux headless testing on Ubuntu with Xvfb and run the Windows Extension Host tests natively.
+- Bump the server and extension package versions and lockfile root metadata to 1.7.5.
+
 ## [1.7.4] - Fix Extension Host test runner dependency
 
 - Removed the undeclared Mocha runtime requirement from the Extension Host test suite.
