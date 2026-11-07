@@ -76,9 +76,27 @@ function sendBinaryChunk(client, transferId, index, bytes) {
   const frame = Buffer.allocUnsafe(4 + header.length + bytes.length);
   frame.writeUInt32BE(header.length, 0); header.copy(frame, 4); bytes.copy(frame, 4 + header.length);
   client.send(frame, { binary: true });
+  return requestId;
 }
 
-async function uploadFile(client, filePath, bytes) {
+async function uploadChunkWithRetry(client, transferId, index, payload, timeoutMs) {
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const requestId = sendBinaryChunk(client, transferId, index, payload);
+    const response = await nextMessage(client, (message) => message.requestId === requestId &&
+      ((message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index) || message.type === "error"), timeoutMs);
+    if (response.type === "file_chunk_ack") return response;
+    lastError = response;
+    const retryAfterMs = Number(response.retryAfterMs);
+    if (!Number.isFinite(retryAfterMs) || retryAfterMs <= 0 || retryAfterMs > 10000 || !/throughput limit/i.test(response.message || "")) {
+      throw new Error(`Upload chunk ${index} rejected: ${response.message}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, retryAfterMs + 25));
+  }
+  throw new Error(`Upload chunk ${index} remained throttled: ${lastError?.message || "retry budget exhausted"}`);
+}
+
+async function uploadFile(client, filePath, bytes, timeoutMs = 15000) {
   const transferId = crypto.randomUUID();
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const beginAck = nextMessage(client, (message) => message.type === "file_begin_ack" && message.transferId === transferId);
@@ -86,14 +104,10 @@ async function uploadFile(client, filePath, bytes) {
   await beginAck;
   let index = 0;
   for (let offset = 0; offset < bytes.length; offset += 48 * 1024) {
-    const chunkAck = nextMessage(client, (message) => message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index);
     const payload = bytes.subarray(offset, offset + 48 * 1024);
-    sendBinaryChunk(client, transferId, index, payload);
-    await chunkAck;
+    await uploadChunkWithRetry(client, transferId, index, payload, timeoutMs);
     if (index === 0) {
-      const retryAck = nextMessage(client, (message) => message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index);
-      sendBinaryChunk(client, transferId, index, payload); // Retried chunks must not append bytes twice.
-      await retryAck;
+      await uploadChunkWithRetry(client, transferId, index, payload, timeoutMs); // Duplicate acknowledgements must not append bytes twice.
     }
     index += 1;
   }
@@ -383,7 +397,7 @@ test("file uploads resume from durable acknowledged chunk offset after server re
   }
 });
 
-test("10 MiB binary transfer completes with matching SHA-256", { timeout: 60000 }, async () => {
+test("10 MiB binary transfer completes with matching SHA-256", { timeout: 120000 }, async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-large-file-test-"));
   const workspace = path.join(temp, "workspaces", "large-team");
   await fs.mkdir(workspace, { recursive: true });
@@ -400,7 +414,7 @@ test("10 MiB binary transfer completes with matching SHA-256", { timeout: 60000 
     client = await connect(`ws://127.0.0.1:${port}`);
     await join(client, token, "large-user", "README.md", "large-team");
     const payload = crypto.randomBytes(10 * 1024 * 1024);
-    const ack = await uploadFile(client, "assets/large.bin", payload);
+    const ack = await uploadFile(client, "assets/large.bin", payload, 60000);
     assert.equal(ack.size, payload.length);
     assert.equal(ack.sha256, crypto.createHash("sha256").update(payload).digest("hex"));
     const saved = await fs.readFile(path.join(workspace, "assets", "large.bin"));

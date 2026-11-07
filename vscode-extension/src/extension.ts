@@ -350,7 +350,9 @@ function settleWaiters(message: any): void {
     if (message.type === "error" && message.requestId === waiter.requestId) {
       clearTimeout(waiter.timer);
       waiters.splice(index, 1);
-      waiter.reject(new Error(message.message || "Server rejected the request"));
+      const error = new Error(message.message || "Server rejected the request");
+      (error as Error & { retryAfterMs?: number }).retryAfterMs = message.retryAfterMs;
+      waiter.reject(error);
     } else if (waiter.predicate(message)) {
       clearTimeout(waiter.timer);
       waiters.splice(index, 1);
@@ -381,7 +383,7 @@ async function requestBinaryChunk(socket: WebSocket, transferId: string, index: 
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const acknowledged = waitForMessage(socket, requestId, (message) =>
-      message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index);
+      message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index, 30000);
     try {
       const header = Buffer.from(JSON.stringify({ type: "file_chunk_binary", transferId, index, requestId }));
       const frame = Buffer.allocUnsafe(4 + header.length + chunk.length);
@@ -394,6 +396,12 @@ async function requestBinaryChunk(socket: WebSocket, transferId: string, index: 
     } catch (error) {
       lastError = error as Error;
       if (socket.readyState !== WebSocket.OPEN) break;
+      const retryAfterMs = (error as Error & { retryAfterMs?: number }).retryAfterMs;
+      if (Number.isFinite(retryAfterMs) && retryAfterMs! > 0 && retryAfterMs! <= 10000) {
+        await new Promise((resolve) => setTimeout(resolve, retryAfterMs! + 25));
+        continue;
+      }
+      if (/server rejected|authentication failed|invalid|exceeds|currently open|unknown outcome/i.test(lastError.message)) break;
     }
   }
   throw lastError || new Error("Binary file chunk was not acknowledged");

@@ -1,6 +1,6 @@
 # Jelo Co-Lab
 
-Self-hosted collaborative editing for Visual Studio Code. **v1.7.1 completes the Phase 3 product experience and Phase 4 operational-hardening implementation.** It builds on the versioned Operational Transformation (OT) engine from Phase 2 and adds offline workspace reconciliation, a collaborator/activity sidebar, transfer and conflict centers, workspace-scoped accounts, binary resumable uploads, administrative audit events, backup/restore, TLS proxy automation, and cross-platform Extension Host CI.
+Self-hosted collaborative editing for Visual Studio Code. **v1.7.2 completes the Phase 3 product experience and Phase 4 operational-hardening implementation.** It builds on the versioned Operational Transformation (OT) engine from Phase 2 and adds offline workspace reconciliation, a collaborator/activity sidebar, transfer and conflict centers, workspace-scoped accounts, binary resumable uploads, administrative audit events, backup/restore, TLS proxy automation, and cross-platform Extension Host CI.
 
 The editor uses server-authoritative versioned OT. It is not a CRDT. The server serializes document operations, transforms edits against retained history, and persists the current revision plus bounded history for reconnect. See [the protocol reference](docs/PHASE-2-PROTOCOL.md) and [Phase 3/4 operations](docs/PHASE-3-4.md).
 
@@ -28,7 +28,7 @@ The installer generates a strong server bootstrap token on a fresh install, reus
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.1 bash
+curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.2 bash
 ```
 
 To provide your own bootstrap token on a fresh install:
@@ -113,7 +113,7 @@ Tokens are stored as salted scrypt hashes in `/var/lib/jelo-colab/access.json`. 
 
 ## Install the VS Code extension
 
-1. Download `jelofen-co-lab-v1.7.1.vsix` from the GitHub Release.
+1. Download `jelofen-co-lab-v1.7.2.vsix` from the GitHub Release.
 2. In VS Code, open **Extensions** (`Ctrl+Shift+X`).
 3. Select `...` → **Install from VSIX...** and choose the downloaded file.
 4. Open a file inside a workspace.

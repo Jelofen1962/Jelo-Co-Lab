@@ -81,23 +81,30 @@ function checkRateLimit(ws) {
   return true;
 }
 
-function checkBulkRateLimit(ws) {
-  // Bulk chunks have a separate byte-bounded bucket so a legitimate large transfer
-  // cannot exhaust the control-message budget. Active upload bytes remain capped globally.
+function checkBulkRateLimit(ws, bytes) {
+  // Byte-based flow control permits a complete 10 MiB file while bounding sustained
+  // upload throughput. A 1 KiB minimum charge prevents tiny-frame floods.
   const now = Date.now();
-  const limit = bulkRateLimits.get(ws) || { tokens: 120, lastRefill: now };
-  limit.tokens = Math.min(120, limit.tokens + (now - limit.lastRefill) * 0.2);
+  const burstBytes = 2 * 1024 * 1024;
+  const bytesPerMs = (4 * 1024 * 1024) / 1000;
+  const limit = bulkRateLimits.get(ws) || { tokens: burstBytes, lastRefill: now };
+  limit.tokens = Math.min(burstBytes, limit.tokens + (now - limit.lastRefill) * bytesPerMs);
   limit.lastRefill = now;
-  if (limit.tokens < 1) { bulkRateLimits.set(ws, limit); return false; }
-  limit.tokens -= 1;
+  const cost = Math.max(1024, bytes);
+  if (limit.tokens < cost) {
+    bulkRateLimits.set(ws, limit);
+    return Math.ceil((cost - limit.tokens) / bytesPerMs);
+  }
+  limit.tokens -= cost;
   bulkRateLimits.set(ws, limit);
-  return true;
+  return 0;
 }
 
 function send(ws, payload) {
   if (ws.readyState !== WebSocket.OPEN) return;
-  const response = payload.type === "error" && typeof ws.activeRequestId === "string"
-    ? { ...payload, requestId: ws.activeRequestId }
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : ws.activeRequestId;
+  const response = payload.type === "error" && typeof requestId === "string"
+    ? { ...payload, requestId }
     : payload;
   ws.send(JSON.stringify(response));
 }
@@ -735,7 +742,7 @@ async function handleFileChunk(ws, info, data) {
       send(ws, { type: "error", message: "A retried chunk did not match the original chunk" });
       return;
     }
-    send(ws, { type: "file_chunk_ack", transferId: data.transferId, index: data.index });
+    send(ws, { type: "file_chunk_ack", requestId: data.requestId, transferId: data.transferId, index: data.index });
     return;
   }
   if (data.index !== upload.nextIndex || upload.received + chunk.length > upload.size) {
@@ -757,7 +764,7 @@ async function handleFileChunk(ws, info, data) {
   upload.nextIndex += 1;
   await persistUploadMetadata(upload);
   activeUploadBytes += chunk.length;
-  send(ws, { type: "file_chunk_ack", transferId: data.transferId, index: data.index });
+  send(ws, { type: "file_chunk_ack", requestId: data.requestId, transferId: data.transferId, index: data.index });
 }
 async function handleFileEnd(ws, info, data) {
   const upload = info.uploads.get(data.transferId);
@@ -883,9 +890,6 @@ function decodeBinaryFrame(raw) {
 
 async function handleMessage(ws, raw, isBinary) {
   if (ws.readyState !== WebSocket.OPEN) return;
-  if (!(isBinary ? checkBulkRateLimit(ws) : checkRateLimit(ws))) {
-    send(ws, { type: "error", message: "Rate limit exceeded. Slow down and retry." }); return;
-  }
   if (raw.length > MAX_MESSAGE_BYTES) {
     send(ws, { type: "error", message: "Message exceeds the 6 MB limit" });
     ws.close(1009, "Message too large");
@@ -894,6 +898,17 @@ async function handleMessage(ws, raw, isBinary) {
   let data;
   try { data = isBinary ? decodeBinaryFrame(raw) : JSON.parse(raw.toString()); }
   catch { send(ws, { type: "error", message: isBinary ? "Invalid binary transfer frame" : "Invalid JSON message" }); if (!isBinary) ws.close(1007, "Invalid JSON"); return; }
+  if (isBinary) {
+    const retryAfterMs = checkBulkRateLimit(ws, data.binaryChunk.length);
+    if (retryAfterMs > 0) {
+      send(ws, { type: "error", requestId: data.requestId, retryAfterMs,
+        message: "Upload throughput limit reached. Retry this chunk after the indicated delay." });
+      return;
+    }
+  } else if (!checkRateLimit(ws)) {
+    send(ws, { type: "error", message: "Rate limit exceeded. Slow down and retry." });
+    return;
+  }
   if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.type !== "string") {
     send(ws, { type: "error", message: "Invalid message" }); return;
   }

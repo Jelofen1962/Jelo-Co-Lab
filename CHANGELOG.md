@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.2] - Binary upload flow-control fix
+
+- Replace the binary chunk message-count limiter with a byte-based token bucket suitable for the supported 10 MiB file size.
+- Correlate binary chunk acknowledgements and rate-limit errors with their request IDs.
+- Return a retry delay for throttled chunks and make the VS Code client retry them safely.
+- Make the large-file integration test report server-side chunk errors immediately instead of hiding them behind a timeout.
+- Extend the large-file CI test budget to tolerate slower hosted runners.
+
 ## [1.7.1] - CI test reliability patch
 
 - Run the Node test files serially in CI and local `npm test` to avoid resource contention between multiple server-spawning integration suites.
