@@ -1,7 +1,9 @@
 # Changelog
 
-## [1.7.2] - Binary upload flow-control fix
+## [1.7.3] - Production dependency security update and binary upload reliability
 
+- Updated the server and VS Code extension production dependency `ws` to 8.20.2, outside the vulnerable 8.0.0–8.20.1 range reported by npm audit.
+- Added high-severity production dependency audit gates for both runtime packages in CI and release automation.
 - Replace the binary chunk message-count limiter with a byte-based token bucket suitable for the supported 10 MiB file size.
 - Correlate binary chunk acknowledgements and rate-limit errors with their request IDs.
 - Return a retry delay for throttled chunks and make the VS Code client retry them safely.

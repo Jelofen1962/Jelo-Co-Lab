@@ -1,6 +1,6 @@
 # Jelo Co-Lab Server
 
-Node.js 20+ WebSocket service. Install production dependencies with `npm ci --omit=dev`; run `npm start`. The server requires `COLLAB_TOKEN` (24–256 letters, digits, `_` or `-`) and defaults to `127.0.0.1:3000`.
+Node.js 20+ WebSocket service. On a network-connected machine, refresh registry integrity metadata and install production dependencies with `npm install --package-lock-only --ignore-scripts && npm ci --omit=dev`; run `npm start`. The server requires `COLLAB_TOKEN` (24–256 letters, digits, `_` or `-`) and defaults to `127.0.0.1:3000`.
 
 ## Environment
 

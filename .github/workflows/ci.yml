@@ -19,8 +19,12 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - working-directory: server
-        run: npm ci
+      - name: Refresh and verify server lockfile metadata
+        working-directory: server
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+          npm ci
       - working-directory: server
         run: npm run check
       - working-directory: server
@@ -41,8 +45,16 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: vscode-extension/package-lock.json
-      - working-directory: vscode-extension
-        run: npm ci
+      - name: Refresh and verify extension lockfile metadata
+        working-directory: vscode-extension
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+          npm ci
+      - name: Audit extension production dependencies
+        if: runner.os == 'Linux'
+        working-directory: vscode-extension
+        run: npm audit --omit=dev --audit-level=high
       - working-directory: vscode-extension
         run: npm install --no-save --package-lock=false @vscode/test-electron@2.5.2
       - working-directory: vscode-extension
