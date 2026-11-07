@@ -15,14 +15,18 @@ const {
   moveWorkspaceFile,
 } = require("./security");
 const { normalize, applyOperation, transformOperation } = require("./ot");
+const { authenticate } = require("./access");
 
 const VERSION = require("./package.json").version;
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
 const COLLAB_TOKEN = process.env.COLLAB_TOKEN || "";
+const ALLOWED_ORIGINS = new Set((process.env.ALLOWED_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean));
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
 const WORKSPACES_DIR = path.join(DATA_DIR, "workspaces");
 const STATE_DIR = path.join(DATA_DIR, "state");
+const ACCESS_FILE = path.join(DATA_DIR, "access.json");
+const AUDIT_FILE = path.join(DATA_DIR, "audit.jsonl");
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const MAX_MESSAGE_BYTES = 6 * 1024 * 1024;
@@ -30,6 +34,10 @@ const CHUNK_BYTES = 48 * 1024;
 const MAX_HISTORY = 500;
 const MAX_HISTORY_BYTES = 1024 * 1024;
 const MAX_CLIENTS = 100;
+const MANIFEST_PAGE_SIZE = 250;
+const MAX_MANIFEST_ENTRIES = 20_000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
+const HEARTBEAT_TIMEOUT_MS = 65_000;
 const MAX_ACTIVE_UPLOAD_BYTES = 128 * 1024 * 1024;
 const MAX_ACTIVE_DOWNLOADS = 32;
 const USER_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_. -]{0,63}$/;
@@ -50,6 +58,7 @@ const fileOperationLoads = new Map();
 const mutatingPaths = new Set();
 const saveTimeouts = new Map();
 const rateLimits = new Map();
+const bulkRateLimits = new Map();
 const downloadAckWaiters = new Map();
 let activeUploadBytes = 0;
 let activeDownloads = 0;
@@ -69,6 +78,19 @@ function checkRateLimit(ws) {
   if (limit.tokens < 1) { rateLimits.set(ws, limit); return false; }
   limit.tokens -= 1;
   rateLimits.set(ws, limit);
+  return true;
+}
+
+function checkBulkRateLimit(ws) {
+  // Bulk chunks have a separate byte-bounded bucket so a legitimate large transfer
+  // cannot exhaust the control-message budget. Active upload bytes remain capped globally.
+  const now = Date.now();
+  const limit = bulkRateLimits.get(ws) || { tokens: 120, lastRefill: now };
+  limit.tokens = Math.min(120, limit.tokens + (now - limit.lastRefill) * 0.2);
+  limit.lastRefill = now;
+  if (limit.tokens < 1) { bulkRateLimits.set(ws, limit); return false; }
+  limit.tokens -= 1;
+  bulkRateLimits.set(ws, limit);
   return true;
 }
 
@@ -111,6 +133,55 @@ function handleDownloadAck(ws, data) {
 
 function log(event, details = {}) {
   console.log(JSON.stringify({ timestamp: new Date().toISOString(), event, ...details }));
+}
+
+async function audit(event, details = {}) {
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true, mode: 0o700 });
+    try {
+      const stat = await fs.stat(AUDIT_FILE);
+      if (stat.size >= 10 * 1024 * 1024) {
+        await fs.rm(`${AUDIT_FILE}.1`, { force: true });
+        await fs.rename(AUDIT_FILE, `${AUDIT_FILE}.1`);
+      }
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+    await fs.appendFile(AUDIT_FILE, JSON.stringify({ timestamp: new Date().toISOString(), event, ...details }) + "\n", { mode: 0o600 });
+  } catch (error) { log("AUDIT_WRITE_ERROR", { message: error.message }); }
+}
+
+function canWrite(info) { return info && ["admin", "editor"].includes(info.role); }
+
+async function buildWorkspaceManifest(workspaceId) {
+  const root = path.join(WORKSPACES_DIR, workspaceId);
+  const entries = [];
+  let totalBytes = 0;
+  async function walk(directory, prefix = "") {
+    let children;
+    try { children = await fs.readdir(directory, { withFileTypes: true }); }
+    catch (error) { if (error.code === "ENOENT") return; throw error; }
+    for (const child of children) {
+      const relative = prefix ? `${prefix}/${child.name}` : child.name;
+      if (!validRelativePath(relative)) continue;
+      const absolute = path.join(directory, child.name);
+      const stat = await fs.lstat(absolute);
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) { await walk(absolute, relative); continue; }
+      if (!stat.isFile()) continue;
+      if (entries.length >= MAX_MANIFEST_ENTRIES) throw new Error(`Workspace manifest exceeds ${MAX_MANIFEST_ENTRIES} files`);
+      if (stat.size > MAX_FILE_BYTES || totalBytes + stat.size > 512 * 1024 * 1024) {
+        entries.push({ path: relative, size: stat.size, mtime: stat.mtimeMs, sha256: null, eligible: false });
+        continue;
+      }
+      const content = await readWorkspaceFileBuffer(WORKSPACES_DIR, workspaceId, relative);
+      if (content === null) continue;
+      totalBytes += content.length;
+      entries.push({ path: relative, size: content.length, mtime: stat.mtimeMs,
+        sha256: crypto.createHash("sha256").update(content).digest("hex"), eligible: true });
+    }
+  }
+  await walk(root);
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+  return entries;
 }
 
 function validRelativePath(value) {
@@ -419,7 +490,7 @@ async function openFile(ws, filePath, initial = false) {
     info.files.add(filePath);
     const state = await loadDocumentState(info.workspaceId, filePath);
     send(ws, { type: initial ? "joined" : "file_joined", workspaceId: info.workspaceId,
-      userId: info.userId, filePath, revision: state.revision, hasRemoteFile: state.text.length > 0 });
+      userId: info.userId, role: info.role, filePath, revision: state.revision, hasRemoteFile: state.text.length > 0 });
     sendSnapshot(ws, state);
     sendPresence(ws, filePath);
     if (!wasOpen) broadcastFile(ws, info.workspaceId, filePath, {
@@ -517,11 +588,56 @@ async function handleEdit(ws, info, data) {
   });
 }
 
+function uploadStoragePaths(workspaceId, userId, transferId) {
+  const workspaceKey = crypto.createHash("sha256").update(workspaceId).digest("hex");
+  const userKey = crypto.createHash("sha256").update(userId).digest("hex").slice(0, 16);
+  const base = path.join(STATE_DIR, "uploads", workspaceKey, `${userKey}-${transferId}`);
+  return { partPath: `${base}.part`, metaPath: `${base}.json` };
+}
+
+async function persistUploadMetadata(upload) {
+  await fs.mkdir(path.dirname(upload.metaPath), { recursive: true, mode: 0o700 });
+  const temporary = `${upload.metaPath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  try {
+    await fs.writeFile(temporary, JSON.stringify({ version: 1, workspaceId: upload.workspaceId, userId: upload.userId,
+      transferId: upload.transferId, path: upload.path, size: upload.size, mtime: upload.mtime,
+      sha256: upload.sha256, nextIndex: upload.nextIndex, received: upload.received,
+      chunkHashes: upload.chunkHashes, updatedAt: Date.now() }), { mode: 0o600, flag: "wx" });
+    await fs.rename(temporary, upload.metaPath);
+  } finally { await fs.rm(temporary, { force: true }).catch(() => {}); }
+}
+
+async function loadOrCreateUpload(info, data) {
+  const storage = uploadStoragePaths(info.workspaceId, info.userId, data.transferId);
+  let metadata;
+  try { metadata = JSON.parse(await fs.readFile(storage.metaPath, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (metadata) {
+    const valid = metadata.version === 1 && metadata.workspaceId === info.workspaceId && metadata.userId === info.userId &&
+      metadata.transferId === data.transferId && metadata.path === data.path && metadata.size === data.size &&
+      metadata.mtime === data.mtime && (!data.sha256 || metadata.sha256 === data.sha256) &&
+      Number.isSafeInteger(metadata.nextIndex) && metadata.nextIndex >= 0 && Number.isSafeInteger(metadata.received) &&
+      metadata.received >= 0 && metadata.received <= data.size && Array.isArray(metadata.chunkHashes) &&
+      metadata.chunkHashes.length === metadata.nextIndex;
+    if (!valid) throw new Error("Persisted transfer metadata does not match this upload");
+    const stat = await fs.stat(storage.partPath);
+    if (stat.size < metadata.received) throw new Error("Persisted transfer data is incomplete; restart this file transfer");
+    if (stat.size > metadata.received) await fs.truncate(storage.partPath, metadata.received);
+    return { ...metadata, ...storage, transferId: data.transferId };
+  }
+  await fs.mkdir(path.dirname(storage.partPath), { recursive: true, mode: 0o700 });
+  const handle = await fs.open(storage.partPath, "wx", 0o600);
+  await handle.close();
+  return { workspaceId: info.workspaceId, userId: info.userId, transferId: data.transferId,
+    path: data.path, size: data.size, mtime: data.mtime, sha256: data.sha256 || null,
+    nextIndex: 0, received: 0, chunkHashes: [], ...storage };
+}
+
 async function handleFileBegin(ws, info, data) {
   if (typeof data.transferId !== "string" || !TRANSFER_ID_RE.test(data.transferId) ||
       typeof data.path !== "string" || !validRelativePath(data.path) ||
       !Number.isSafeInteger(data.size) || data.size < 0 || data.size > MAX_FILE_BYTES ||
-      !Number.isFinite(data.mtime)) {
+      !Number.isFinite(data.mtime) || (data.sha256 !== undefined && !/^[a-f0-9]{64}$/.test(data.sha256))) {
     send(ws, { type: "error", message: "Invalid file transfer metadata" });
     return;
   }
@@ -534,12 +650,14 @@ async function handleFileBegin(ws, info, data) {
     }
     const existingUpload = info.uploads.get(data.transferId);
     if (existingUpload) {
-      if (existingUpload.path === data.path && existingUpload.size === data.size) send(ws, { type: "file_begin_ack", transferId: data.transferId });
+      if (existingUpload.path === data.path && existingUpload.size === data.size && (!data.sha256 || existingUpload.sha256 === data.sha256))
+        send(ws, { type: "file_begin_ack", transferId: data.transferId, nextIndex: existingUpload.nextIndex });
       else send(ws, { type: "error", message: "Transfer ID was reused with different metadata" });
       return;
     }
-    if (info.completedUploads.has(data.transferId)) {
-      send(ws, { type: "file_begin_ack", transferId: data.transferId });
+    const completed = info.completedUploads.get(data.transferId);
+    if (completed) {
+      send(ws, { type: "file_begin_ack", transferId: data.transferId, complete: true, path: completed.path, size: completed.size, sha256: completed.sha256 });
       return;
     }
     if (info.uploads.size >= 2) {
@@ -561,11 +679,18 @@ async function handleFileBegin(ws, info, data) {
         return;
       }
     }
-    info.uploads.set(data.transferId, { path: data.path, size: data.size, mtime: data.mtime, nextIndex: 0, received: 0, chunks: [], chunkHashes: [] });
-    send(ws, { type: "file_begin_ack", transferId: data.transferId });
+    try {
+      const upload = await loadOrCreateUpload(info, data);
+      if (activeUploadBytes + upload.received > MAX_ACTIVE_UPLOAD_BYTES) {
+        send(ws, { type: "error", message: "Server upload quota reached. Retry after another transfer completes." });
+        return;
+      }
+      info.uploads.set(data.transferId, upload);
+      activeUploadBytes += upload.received;
+      send(ws, { type: "file_begin_ack", transferId: data.transferId, nextIndex: upload.nextIndex, resumed: upload.nextIndex > 0 });
+    } catch (error) { send(ws, { type: "error", message: `Could not resume file transfer: ${error.message}` }); }
   });
 }
-
 function releaseUpload(info, transferId, upload) {
   if (info.uploads.get(transferId) !== upload) return false;
   info.uploads.delete(transferId);
@@ -592,14 +717,15 @@ async function removePersistedDocumentStates(workspaceId, filePath) {
   }
 }
 
-function handleFileChunk(ws, info, data) {
+async function handleFileChunk(ws, info, data) {
   const upload = info.uploads.get(data.transferId);
-  if (!upload || !Number.isSafeInteger(data.index) || data.index < 0 || typeof data.data !== "string" || data.data.length > 70_000) {
+  if (!upload || !Number.isSafeInteger(data.index) || data.index < 0 ||
+      (!Buffer.isBuffer(data.binaryChunk) && (typeof data.data !== "string" || data.data.length > 70_000))) {
     send(ws, { type: "error", message: "Invalid file chunk" });
     return;
   }
-  const chunk = Buffer.from(data.data, "base64");
-  if (!chunk.length || chunk.length > CHUNK_BYTES || chunk.toString("base64") !== data.data) {
+  const chunk = Buffer.isBuffer(data.binaryChunk) ? data.binaryChunk : Buffer.from(data.data || "", "base64");
+  if (!chunk.length || chunk.length > CHUNK_BYTES || (!Buffer.isBuffer(data.binaryChunk) && chunk.toString("base64") !== data.data)) {
     send(ws, { type: "error", message: "Invalid file chunk encoding" });
     return;
   }
@@ -617,17 +743,22 @@ function handleFileChunk(ws, info, data) {
     return;
   }
   if (activeUploadBytes + chunk.length > MAX_ACTIVE_UPLOAD_BYTES) {
-    send(ws, { type: "error", message: "Server upload memory limit reached. Retry shortly." });
+    send(ws, { type: "error", message: "Server upload memory quota reached. Retry shortly." });
     return;
   }
-  upload.chunks.push(chunk);
+  const handle = await fs.open(upload.partPath, "r+");
+  try {
+    await handle.truncate(upload.received);
+    await handle.write(chunk, 0, chunk.length, upload.received);
+    await handle.sync();
+  } finally { await handle.close(); }
   upload.chunkHashes.push(chunkHash);
   upload.received += chunk.length;
-  activeUploadBytes += chunk.length;
   upload.nextIndex += 1;
+  await persistUploadMetadata(upload);
+  activeUploadBytes += chunk.length;
   send(ws, { type: "file_chunk_ack", transferId: data.transferId, index: data.index });
 }
-
 async function handleFileEnd(ws, info, data) {
   const upload = info.uploads.get(data.transferId);
   if (!upload) {
@@ -640,10 +771,12 @@ async function handleFileEnd(ws, info, data) {
     send(ws, { type: "error", message: "Incomplete or invalid file transfer" });
     return;
   }
-  const content = Buffer.concat(upload.chunks, upload.received);
+  const content = await fs.readFile(upload.partPath);
+  if (content.length !== upload.size) { send(ws, { type: "error", message: "Persisted file transfer is incomplete" }); return; }
   const hash = crypto.createHash("sha256").update(content).digest("hex");
-  if (hash !== data.sha256) {
+  if (hash !== data.sha256 || (upload.sha256 && upload.sha256 !== data.sha256)) {
     releaseUpload(info, data.transferId, upload);
+    await fs.rm(upload.partPath, { force: true }); await fs.rm(upload.metaPath, { force: true });
     send(ws, { type: "error", message: "File checksum mismatch" });
     return;
   }
@@ -664,6 +797,7 @@ async function handleFileEnd(ws, info, data) {
       docStates.delete(key);
       await fs.rm(stateFile(info.workspaceId, upload.path), { force: true });
       releaseUpload(info, data.transferId, upload);
+      await fs.rm(upload.partPath, { force: true }); await fs.rm(upload.metaPath, { force: true });
       const message = { type: "file_available", path: upload.path, size: content.length, sha256: hash, mtime: upload.mtime };
       broadcastWorkspace(ws, info.workspaceId, message);
       const acknowledgement = { type: "file_ack", transferId: data.transferId, path: upload.path, size: content.length, sha256: hash };
@@ -671,6 +805,7 @@ async function handleFileEnd(ws, info, data) {
       while (info.completedUploads.size > 20) info.completedUploads.delete(info.completedUploads.keys().next().value);
       send(ws, acknowledgement);
       log("FILE_TRANSFER_COMPLETE", { user: info.userId, workspace: info.workspaceId, file: upload.path, size: content.length });
+      await audit("FILE_WRITE", { user: info.userId, workspace: info.workspaceId, file: upload.path, size: content.length });
     });
   } finally {
     mutatingPaths.delete(key);
@@ -696,6 +831,24 @@ async function sendDownloadFrame(ws, transferId, phase, index, payload) {
   }
 }
 
+async function sendDownloadBinaryChunk(ws, transferId, index, chunk) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (ws.readyState !== WebSocket.OPEN) throw new Error("Client disconnected during download");
+    const acknowledgement = waitForDownloadAck(ws, transferId, "chunk", index);
+    const header = Buffer.from(JSON.stringify({ type: "download_chunk_binary", transferId, index }));
+    const frame = Buffer.allocUnsafe(4 + header.length + chunk.length);
+    frame.writeUInt32BE(header.length, 0);
+    header.copy(frame, 4);
+    chunk.copy(frame, 4 + header.length);
+    ws.send(frame, { binary: true });
+    try {
+      const result = await acknowledgement;
+      if (result.status !== "ok") throw new Error("Client rejected binary download chunk");
+      return;
+    } catch (error) { if (attempt === 2 || ws.readyState !== WebSocket.OPEN) throw error; }
+  }
+}
+
 async function sendFileDownload(ws, workspaceId, filePath) {
   const buffer = await readWorkspaceFileBuffer(WORKSPACES_DIR, workspaceId, filePath);
   if (buffer === null) { send(ws, { type: "error", message: "Requested file does not exist", path: filePath }); return; }
@@ -707,24 +860,40 @@ async function sendFileDownload(ws, workspaceId, filePath) {
     { type: "download_begin", transferId, path: filePath, size: buffer.length, sha256, mtime: stat.mtimeMs });
   let index = 0;
   for (let offset = 0; offset < buffer.length; offset += CHUNK_BYTES) {
-    await sendDownloadFrame(ws, transferId, "chunk", index,
-      { type: "download_chunk", transferId, index, data: buffer.subarray(offset, offset + CHUNK_BYTES).toString("base64") });
+    await sendDownloadBinaryChunk(ws, transferId, index, buffer.subarray(offset, offset + CHUNK_BYTES));
     index += 1;
   }
   await sendDownloadFrame(ws, transferId, "complete", undefined, { type: "download_end", transferId, chunks: index });
 }
 
+function decodeBinaryFrame(raw) {
+  const buffer = Buffer.from(raw);
+  if (buffer.length < 5) throw new Error("Binary frame is too short");
+  const headerLength = buffer.readUInt32BE(0);
+  if (headerLength < 2 || headerLength > 4096 || 4 + headerLength >= buffer.length) throw new Error("Invalid binary frame header length");
+  const header = JSON.parse(buffer.subarray(4, 4 + headerLength).toString("utf8"));
+  if (!header || header.type !== "file_chunk_binary" || !TRANSFER_ID_RE.test(header.transferId || "") ||
+      !Number.isSafeInteger(header.index) || header.index < 0 || typeof header.requestId !== "string") {
+    throw new Error("Invalid binary frame header");
+  }
+  const payload = buffer.subarray(4 + headerLength);
+  if (!payload.length || payload.length > CHUNK_BYTES) throw new Error("Invalid binary chunk size");
+  return { ...header, binaryChunk: payload };
+}
+
 async function handleMessage(ws, raw, isBinary) {
   if (ws.readyState !== WebSocket.OPEN) return;
-  if (!checkRateLimit(ws)) { send(ws, { type: "error", message: "Rate limit exceeded. Slow down and retry." }); return; }
-  if (isBinary || raw.length > MAX_MESSAGE_BYTES) {
-    send(ws, { type: "error", message: "Only JSON text messages up to 6 MB are accepted" });
-    ws.close(1003, "Invalid message format");
+  if (!(isBinary ? checkBulkRateLimit(ws) : checkRateLimit(ws))) {
+    send(ws, { type: "error", message: "Rate limit exceeded. Slow down and retry." }); return;
+  }
+  if (raw.length > MAX_MESSAGE_BYTES) {
+    send(ws, { type: "error", message: "Message exceeds the 6 MB limit" });
+    ws.close(1009, "Message too large");
     return;
   }
   let data;
-  try { data = JSON.parse(raw.toString()); }
-  catch { send(ws, { type: "error", message: "Invalid JSON message" }); ws.close(1007, "Invalid JSON"); return; }
+  try { data = isBinary ? decodeBinaryFrame(raw) : JSON.parse(raw.toString()); }
+  catch { send(ws, { type: "error", message: isBinary ? "Invalid binary transfer frame" : "Invalid JSON message" }); if (!isBinary) ws.close(1007, "Invalid JSON"); return; }
   if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.type !== "string") {
     send(ws, { type: "error", message: "Invalid message" }); return;
   }
@@ -734,7 +903,12 @@ async function handleMessage(ws, raw, isBinary) {
     try { workspaceId = validateWorkspaceId(data.workspaceId); }
     catch { send(ws, { type: "error", message: "Invalid workspace ID" }); return; }
     if (typeof data.userId !== "string" || !USER_ID_RE.test(data.userId)) { send(ws, { type: "error", message: "Invalid user ID" }); return; }
-    if (!safeTokenEqual(data.token)) { send(ws, { type: "error", message: "Authentication failed" }); ws.close(1008, "Authentication failed"); return; }
+    const membership = await authenticate({ filename: ACCESS_FILE, workspaceId, userId: data.userId,
+      token: data.token, bootstrapToken: COLLAB_TOKEN });
+    if (!membership) {
+      await audit("AUTH_FAILURE", { workspace: workspaceId, user: data.userId });
+      send(ws, { type: "error", message: "Authentication failed" }); ws.close(1008, "Authentication failed"); return;
+    }
 
     handleLeave(ws);
     for (const [existingWs, existing] of clients) {
@@ -743,20 +917,42 @@ async function handleMessage(ws, raw, isBinary) {
         existingWs.close(1008, "Duplicate user ID");
       }
     }
-    const info = { workspaceId, userId: data.userId, color: `#${crypto.randomBytes(3).toString("hex")}`,
-      files: new Set(), cursors: new Map(), uploads: new Map(), completedUploads: new Map(), downloads: new Set() };
+    const info = { workspaceId, userId: data.userId, role: membership.role, color: `#${crypto.randomBytes(3).toString("hex")}`,
+      files: new Set(), cursors: new Map(), uploads: new Map(), completedUploads: new Map(), downloads: new Set(),
+      lastHeartbeatAck: Date.now(), manifestCache: null };
+    ws.lastHeartbeatAck = Date.now();
     clients.set(ws, info);
     await openFile(ws, data.filePath, true);
-    log("JOIN", { user: data.userId, workspace: workspaceId });
+    log("JOIN", { user: data.userId, workspace: workspaceId, role: membership.role });
+    await audit("JOIN", { user: data.userId, workspace: workspaceId, role: membership.role });
     return;
   }
 
   const info = clients.get(ws);
   if (!info) { send(ws, { type: "error", message: "Join and authenticate a workspace first" }); return; }
 
+  if (data.type === "heartbeat_ack") {
+    const sentAt = Number(data.ts);
+    if (Number.isFinite(sentAt)) { info.lastHeartbeatAck = Date.now(); ws.lastHeartbeatAck = info.lastHeartbeatAck; info.latencyMs = Math.max(0, Date.now() - sentAt); }
+    return;
+  }
+  if (data.type === "manifest_get") {
+    if (!Number.isSafeInteger(data.page) || data.page < 0 || data.page > 100) { send(ws, { type: "error", message: "Invalid manifest page" }); return; }
+    if (data.page === 0 || !info.manifestCache || Date.now() - info.manifestCache.createdAt > 30_000) {
+      try { info.manifestCache = { createdAt: Date.now(), entries: await buildWorkspaceManifest(info.workspaceId) }; }
+      catch (error) { send(ws, { type: "error", message: `Could not build workspace manifest: ${error.message}` }); return; }
+    }
+    const entries = info.manifestCache.entries;
+    const pages = Math.max(1, Math.ceil(entries.length / MANIFEST_PAGE_SIZE));
+    if (data.page >= pages) { send(ws, { type: "error", message: "Manifest page is out of range" }); return; }
+    send(ws, { type: "manifest_page", requestId: data.requestId, page: data.page, pages, total: entries.length,
+      createdAt: info.manifestCache.createdAt, entries: entries.slice(data.page * MANIFEST_PAGE_SIZE, (data.page + 1) * MANIFEST_PAGE_SIZE) });
+    return;
+  }
   if (data.type === "open_file") { await openFile(ws, data.filePath); return; }
   if (data.type === "close_file") { closeFile(ws, data.filePath); return; }
   if (data.type === "edit") {
+    if (!canWrite(info)) { send(ws, { type: "error", message: "Your workspace role is read-only" }); return; }
     if (typeof data.filePath !== "string" || !info.files.has(data.filePath)) { send(ws, { type: "error", message: "Open the document before editing" }); return; }
     await handleEdit(ws, info, data); return;
   }
@@ -793,8 +989,8 @@ async function handleMessage(ws, raw, isBinary) {
     broadcastFile(ws, info.workspaceId, data.filePath, { type: "cursor", filePath: data.filePath, ...cursor });
     return;
   }
-  if (data.type === "file_begin") { await handleFileBegin(ws, info, data); return; }
-  if (data.type === "file_chunk") { handleFileChunk(ws, info, data); return; }
+  if (data.type === "file_begin") { if (!canWrite(info)) { send(ws, { type: "error", message: "Your workspace role is read-only" }); return; } await handleFileBegin(ws, info, data); return; }
+  if (data.type === "file_chunk" || data.type === "file_chunk_binary") { await handleFileChunk(ws, info, data); return; }
   if (data.type === "file_end") { await handleFileEnd(ws, info, data); return; }
   if (data.type === "file_cancel") {
     if (typeof data.transferId !== "string") return;
@@ -814,10 +1010,7 @@ async function handleMessage(ws, raw, isBinary) {
     const parts = data.path.split("/");
     const lockKeys = parts.map((_, index) => documentKey(info.workspaceId, parts.slice(0, index + 1).join("/")));
     void withDocumentLocks(lockKeys, async () => {
-      if (isPathMutating(info.workspaceId, data.path)) {
-        send(ws, { type: "error", message: "This file is currently being moved or deleted", path: data.path });
-        return;
-      }
+      // The keyed lock already waited for any move/delete/upload on this path.
       if (Array.from(clients.values()).some((member) => member.workspaceId === info.workspaceId &&
           Array.from(member.uploads.values()).some((upload) => upload.path === data.path))) {
         send(ws, { type: "error", message: "This file is currently being uploaded. Request it again after the transfer completes.", path: data.path });
@@ -831,6 +1024,7 @@ async function handleMessage(ws, raw, isBinary) {
     return;
   }
   if (data.type === "file_delete") {
+    if (!canWrite(info)) { send(ws, { type: "error", message: "Your workspace role is read-only" }); return; }
     if (!validRelativePath(data.path) || (data.operationId !== undefined && !TRANSFER_ID_RE.test(data.operationId))) {
       send(ws, { type: "error", message: "Invalid file path or operation ID" }); return;
     }
@@ -885,6 +1079,7 @@ async function handleMessage(ws, raw, isBinary) {
           }
         }
         broadcastWorkspace(ws, info.workspaceId, { type: "file_deleted", path: data.path });
+        await audit("FILE_DELETE", { user: info.userId, workspace: info.workspaceId, path: data.path });
         const acknowledgement = { type: "file_operation_ack", operation: "delete", path: data.path, operationId: data.operationId };
         await completeFileOperation(info, data.operationId, acknowledgement);
         send(ws, acknowledgement);
@@ -895,6 +1090,7 @@ async function handleMessage(ws, raw, isBinary) {
     return;
   }
   if (data.type === "file_move") {
+    if (!canWrite(info)) { send(ws, { type: "error", message: "Your workspace role is read-only" }); return; }
     if (!validRelativePath(data.from) || !validRelativePath(data.to) || data.from === data.to || data.to.startsWith(`${data.from}/`) ||
         (data.operationId !== undefined && !TRANSFER_ID_RE.test(data.operationId))) {
       send(ws, { type: "error", message: "Invalid move path or operation ID" }); return;
@@ -950,6 +1146,7 @@ async function handleMessage(ws, raw, isBinary) {
           }
         }
         broadcastWorkspace(ws, info.workspaceId, { type: "file_moved", from: data.from, to: data.to });
+        await audit("FILE_MOVE", { user: info.userId, workspace: info.workspaceId, from: data.from, to: data.to });
         const acknowledgement = { type: "file_operation_ack", operation: "move", from: data.from, to: data.to, operationId: data.operationId };
         await completeFileOperation(info, data.operationId, acknowledgement);
         send(ws, acknowledgement);
@@ -977,12 +1174,15 @@ function handleLeave(ws) {
   }
   clients.delete(ws);
   rateLimits.delete(ws);
+  bulkRateLimits.delete(ws);
 }
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/healthz") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    res.end(JSON.stringify({ status: "ok", service: "jelo-colab", version: VERSION }));
+    res.end(JSON.stringify({ status: "ok", service: "jelo-colab", version: VERSION,
+      uptimeSeconds: Math.floor(process.uptime()), connections: wss?.clients?.size || 0,
+      memoryBytes: process.memoryUsage().rss }));
     return;
   }
   res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
@@ -990,7 +1190,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocket.Server({ server, maxPayload: MAX_MESSAGE_BYTES, perMessageDeflate: false });
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, request) => {
+  const origin = request.headers.origin;
+  if (origin && !ALLOWED_ORIGINS.has(origin)) { ws.close(1008, "Origin is not allowed"); return; }
+  ws.isAlive = true;
+  ws.on("pong", () => { ws.isAlive = true; const info = clients.get(ws); if (info) info.lastHeartbeatAck = Date.now(); });
   if (wss.clients.size > MAX_CLIENTS) { ws.close(1013, "Server connection limit reached"); return; }
   let messageQueue = Promise.resolve();
   let queuedMessages = 0;
@@ -999,6 +1203,11 @@ wss.on("connection", (ws) => {
       try {
         const control = JSON.parse(raw.toString());
         if (control?.type === "download_ack") { handleDownloadAck(ws, control); return; }
+        if (control?.type === "heartbeat_ack") {
+          const info = clients.get(ws);
+          if (info && Number.isFinite(control.ts)) { info.lastHeartbeatAck = Date.now(); info.latencyMs = Math.max(0, Date.now() - control.ts); }
+          return;
+        }
       } catch { /* The normal message handler reports malformed JSON. */ }
     }
     queuedMessages += 1;
@@ -1007,6 +1216,8 @@ wss.on("connection", (ws) => {
       let requestId;
       if (!isBinary) {
         try { requestId = JSON.parse(raw.toString())?.requestId; } catch { /* handled by handleMessage */ }
+      } else {
+        try { requestId = decodeBinaryFrame(raw).requestId; } catch { /* handled by handleMessage */ }
       }
       ws.activeRequestId = typeof requestId === "string" && requestId.length <= 80 ? requestId : undefined;
       try {
@@ -1032,7 +1243,9 @@ wss.on("connection", (ws) => {
 });
 
 async function shutdown(signal) {
+  clearInterval(heartbeatTimer);
   log("SHUTDOWN", { signal });
+  await audit("SHUTDOWN", { signal });
   const pendingWrites = [];
   for (const pending of saveTimeouts.values()) { clearTimeout(pending.timer); pendingWrites.push(pending.save()); }
   await Promise.allSettled(pendingWrites);
@@ -1042,6 +1255,49 @@ async function shutdown(signal) {
   await new Promise((resolve) => server.close(resolve));
   process.exit(0);
 }
+
+async function purgeExpiredUploads() {
+  const uploadRoot = path.join(STATE_DIR, "uploads");
+  let workspaces;
+  try { workspaces = await fs.readdir(uploadRoot, { withFileTypes: true }); }
+  catch (error) { if (error.code === "ENOENT") return; throw error; }
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  for (const workspace of workspaces) {
+    if (!workspace.isDirectory()) continue;
+    const directory = path.join(uploadRoot, workspace.name);
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const metaPath = path.join(directory, entry.name);
+      try {
+        const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+        if (!Number.isFinite(meta.updatedAt) || meta.updatedAt < cutoff) {
+          await fs.rm(metaPath, { force: true });
+          await fs.rm(metaPath.replace(/\.json$/, ".part"), { force: true });
+          log("EXPIRED_UPLOAD_REMOVED", { transferId: meta.transferId });
+        }
+      } catch (error) { log("UPLOAD_METADATA_ERROR", { file: entry.name, message: error.message }); }
+    }
+  }
+}
+void purgeExpiredUploads().catch((error) => log("UPLOAD_CLEANUP_ERROR", { message: error.message }));
+
+const heartbeatTimer = setInterval(() => {
+  const now = Date.now();
+  for (const client of wss.clients) {
+    const info = clients.get(client);
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (!info) { client.ping(); continue; }
+    if (now - info.lastHeartbeatAck > HEARTBEAT_TIMEOUT_MS) {
+      log("STALE_SESSION", { user: info.userId, workspace: info.workspaceId });
+      void audit("STALE_SESSION", { user: info.userId, workspace: info.workspaceId });
+      client.terminate();
+      continue;
+    }
+    send(client, { type: "heartbeat", ts: now, latencyMs: info.latencyMs ?? null });
+    client.ping();
+  }
+}, HEARTBEAT_INTERVAL_MS);
+heartbeatTimer.unref();
 
 server.on("error", (error) => { log("HTTP_SERVER_ERROR", { message: error.message }); process.exitCode = 1; });
 server.listen(PORT, HOST, () => log("SERVER_READY", { host: HOST, port: PORT, version: VERSION, dataDir: DATA_DIR }));

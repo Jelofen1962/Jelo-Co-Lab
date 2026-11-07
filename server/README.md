@@ -1,66 +1,59 @@
 # Jelo Co-Lab Server
 
-Node.js 20+ WebSocket server for the Jelo Co-Lab VS Code extension (v1.6.0 / Phase 2).
-
-## Start locally
-
-```bash
-npm ci
-COLLAB_TOKEN="$(openssl rand -hex 32)" npm start
-```
-
-The server binds to `127.0.0.1:3000` by default. `COLLAB_TOKEN` is required and must be 24-256 characters using letters, numbers, `_` or `-`.
+Node.js 20+ WebSocket service. Install production dependencies with `npm ci --omit=dev`; run `npm start`. The server requires `COLLAB_TOKEN` (24–256 letters, digits, `_` or `-`) and defaults to `127.0.0.1:3000`.
 
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `COLLAB_TOKEN` | Required | Shared server authentication secret |
-| `HOST` | `127.0.0.1` | Listen address; use a TLS reverse proxy for remote clients |
-| `PORT` | `3000` | HTTP/WebSocket port |
-| `DATA_DIR` | `server/data` | Persistent workspace files and document state |
+| `HOST` | `127.0.0.1` | Bind address. Keep localhost behind a TLS reverse proxy for remote access. |
+| `PORT` | `3000` | HTTP/WebSocket port. |
+| `COLLAB_TOKEN` | required | Bootstrap administrator token for workspaces not yet managed in `access.json`. |
+| `DATA_DIR` | `server/data` | Workspace files, access store, document state, upload partials and audit log. |
+| `ALLOWED_ORIGINS` | empty | Optional comma-separated allowlist for browser `Origin` headers. VS Code's Node WebSocket client sends no browser origin. |
 
-All workspace IDs on one server currently use the same server token. This is a shared-secret model, not per-workspace membership or role-based authorization.
+## Workspace access management
 
-## Health and diagnostics
+The first member added to a workspace must have the `admin` role. Run the CLI as the service account:
 
 ```bash
-curl http://127.0.0.1:3000/healthz
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab node /opt/jelo-colab/manage-access.js add workspace alice admin
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab node /opt/jelo-colab/manage-access.js add workspace bob editor
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab node /opt/jelo-colab/manage-access.js add workspace guest viewer
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab node /opt/jelo-colab/manage-access.js list workspace
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab node /opt/jelo-colab/manage-access.js rotate workspace bob editor
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab node /opt/jelo-colab/manage-access.js remove workspace guest
+```
+
+Tokens are random 256-bit values. Only scrypt salt/hash pairs are stored. The CLI displays a token once, rotates credentials, prevents last-admin removal/demotion, and appends membership events to `audit.jsonl`. The bootstrap token does not bypass a configured workspace membership list.
+
+## Storage layout
+
+- `workspaces/<workspaceId>/` — synchronized regular files.
+- `access.json` — workspace member credentials/roles (mode 0600).
+- `audit.jsonl` and `audit.jsonl.1` — operational/security audit trail.
+- `state/<workspace-hash>.json` — persistent OT documents and operation history.
+- `state/uploads/` — durable upload `.part` and metadata records; stale partials older than seven days are purged on startup.
+
+## Protocol and quotas
+
+- Versioned server-authoritative OT with bounded document history.
+- Binary 48 KiB file chunks, SHA-256 integrity, acknowledged sequential writes, and resume after server restart.
+- 10 MiB maximum file size, 5 MiB maximum document, 128 MiB aggregate active upload storage quota, two concurrent uploads per client, and 32 concurrent downloads globally.
+- Separate control-message and binary-chunk rate limits.
+- Manifest pages contain at most 250 entries; a manifest is capped at 20,000 paths and 512 MiB of eligible scanned content.
+- Workspace-relative paths only; symlinks and special files are refused.
+
+## Checks and tests
+
+```bash
+npm ci
 npm run check
 npm test
 ```
 
-`GET /healthz` returns service status and running version. Structured newline-delimited JSON logs go to stdout/stderr and are available through `journalctl` under systemd.
+Tests cover path and symlink safety, access roles and CLI token rotation, OT convergence, file operations, chunk retries, restart-resumable uploads, a 10 MiB binary transfer, viewer write denial, browser-Origin allowlisting, 10 MiB transfer throughput, and 40 concurrent collaborators (20 server tests total).
 
-## Phase 2 protocol
+## Operational guidance
 
-- Documents have monotonically increasing server revisions.
-- Clients submit UTF-16 text operations with a `baseRevision`, `clientId`, and `opId`.
-- The server serializes edits per document, transforms stale operations through bounded history, persists state, then broadcasts the accepted operation.
-- Duplicate operation IDs are acknowledged without applying the operation twice.
-- Reconnect requests return history since a client's last revision; if history is too old or incomplete, the server sends a current snapshot.
-- Files up to 10 MiB are transferred in sequential 48 KiB Base64 chunks. Every chunk is acknowledged and checked, and completed content is verified with SHA-256 before atomic persistence.
-- Downloads are acknowledged frame-by-frame and are limited to two simultaneous downloads per connection.
-- File deletion and rename are serialized against document saves, opens, transfers and downloads.
-- File operations carry idempotency IDs and are recorded in a persistent per-workspace journal. Completed retries receive the original acknowledgment; unresolved journal entries fail closed rather than risk applying a delayed delete or move to a newer file.
-
-See `../docs/PHASE-2-PROTOCOL.md` for message formats and known ceilings.
-
-## Security boundaries
-
-- Workspace IDs and relative paths are validated at the server boundary.
-- Symlink path components and non-regular files are rejected.
-- Server writes use temporary files, fsync, and atomic rename.
-- File data is limited to 10 MiB; WebSocket JSON messages are limited to 6 MiB.
-- Common repository/build directories, cloud/SSH credentials, `.env*`, and key/certificate files are excluded.
-- Authentication secrets are compared using `crypto.timingSafeEqual`.
-- Use `wss://` for remote access. The installer binds to localhost and expects a TLS reverse proxy.
-
-## Known limitations
-
-- OT history is bounded (500 operations or 1 MiB); older clients need snapshot recovery.
-- Upload retries restart a file from its first chunk after a disconnect; partial transfers are not persisted across server restarts.
-- Base64 JSON chunks are not as efficient as a binary WebSocket frame protocol.
-- One shared token protects the server; per-workspace roles and token rotation are future work.
-- The file-operation journal retains up to 5,000 operation records per workspace. Pending/unknown outcomes are never evicted automatically and require manual inspection.
-- Server unit/integration tests do not replace VS Code Extension Host or multi-OS end-to-end testing.
+Use a reverse proxy with TLS/WSS, keep `DATA_DIR` writable only by the service account, back it up with the provided `scripts/backup-server.sh`, and test restore before deployment. `GET /healthz` returns non-sensitive health information only.

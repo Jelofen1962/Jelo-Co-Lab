@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - working-directory: server
+        run: npm ci
+      - working-directory: server
+        run: npm run check
+      - working-directory: server
+        run: npm test
+      - working-directory: server
+        run: npm audit --omit=dev --audit-level=high
+
+  extension-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+      - working-directory: vscode-extension
+        run: npm ci
+      - working-directory: vscode-extension
+        run: npm install --no-save --package-lock=false @vscode/test-electron@2.5.2
+      - working-directory: vscode-extension
+        run: npm run compile
+      - name: Run Extension Host tests (Linux)
+        if: runner.os == 'Linux'
+        working-directory: vscode-extension
+        run: xvfb-run -a npm test
+      - name: Run Extension Host tests (Windows/macOS)
+        if: runner.os != 'Linux'
+        working-directory: vscode-extension
+        run: npm test

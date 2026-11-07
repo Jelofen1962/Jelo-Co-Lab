@@ -1,18 +1,21 @@
 # Jelo Co-Lab
 
-Self-hosted collaborative editing for VS Code. **Phase 1.5.4** is the security, packaging, installation and release foundation. It is a bounded Phase 1 release, not a claim that concurrent editing is already production-grade. The roadmap below keeps the remaining synchronization-engine work explicit for Phase 2.
+Self-hosted collaborative editing for Visual Studio Code. **v1.7.0 completes the Phase 3 product experience and Phase 4 operational-hardening implementation.** It builds on the versioned Operational Transformation (OT) engine from Phase 2 and adds offline workspace reconciliation, a collaborator/activity sidebar, transfer and conflict centers, workspace-scoped accounts, binary resumable uploads, administrative audit events, backup/restore, TLS proxy automation, and cross-platform Extension Host CI.
+
+The editor uses server-authoritative versioned OT. It is not a CRDT. The server serializes document operations, transforms edits against retained history, and persists the current revision plus bounded history for reconnect. See [the protocol reference](docs/PHASE-2-PROTOCOL.md) and [Phase 3/4 operations](docs/PHASE-3-4.md).
 
 ## Release assets
 
 Each GitHub Release created from a `v*` tag contains:
 
 - `jelofen-co-lab-vX.Y.Z.vsix` — installable VS Code extension.
-- `jelo-colab-server-vX.Y.Z.zip` — standalone server package.
-- `.sha256` sidecars for both files.
+- `jelo-colab-server-vX.Y.Z.zip` — standalone server and operational scripts.
+- SHA-256 sidecars for both release assets.
+- GitHub build-provenance attestations for the VSIX and server ZIP.
 
-The workflow checks that the tag version matches both package versions, runs server tests, compiles the extension, and only then publishes the assets.
+The release workflow verifies tag/package version agreement, runs server checks and tests, compiles and packages the extension, checks that the `ws` runtime dependency is present in the VSIX, creates server assets, and publishes the release. The CI workflow also runs the Extension Host suite on Ubuntu, Windows, and macOS.
 
-## Install on a fresh Ubuntu/Debian server
+## Install the server on Ubuntu/Debian
 
 After publishing a GitHub release, run this single command on Ubuntu 22.04/24.04 or Debian 12+:
 
@@ -20,54 +23,152 @@ After publishing a GitHub release, run this single command on Ubuntu 22.04/24.04
 curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo bash
 ```
 
-On a first install, the script generates a random server token automatically. On an upgrade, it reuses the token already stored in `/etc/jelo-colab.env`. It installs Node.js 20+, downloads the latest server ZIP and its checksum, verifies the checksum, runs server checks/tests, configures a restricted systemd service, and verifies `/healthz`.
+The installer generates a strong server bootstrap token on a fresh install, reuses the existing token on upgrade, verifies the downloaded release ZIP against its SHA-256 sidecar, installs Node.js 20+, installs production dependencies, runs the server checks/tests, creates a restricted systemd service, and checks `/healthz`.
 
-For unattended upgrades, the installer reuses the token already stored in `/etc/jelo-colab.env` unless `COLLAB_TOKEN` is explicitly supplied. To install a specific release:
+To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.5.4 bash
+curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.0 bash
 ```
 
-To supply your own token on first install, use `curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env COLLAB_TOKEN='YOUR_24_TO_256_CHARACTER_TOKEN' bash`. Use only letters, numbers, `_` and `-`. Retrieve the generated token locally with `sudo awk -F= '/^COLLAB_TOKEN=/ {print $2}' /etc/jelo-colab.env`.
+To provide your own bootstrap token on a fresh install:
+
+```bash
+sudo env COLLAB_TOKEN='YOUR_24_TO_256_CHARACTER_TOKEN' bash
+```
+
+The token must contain 24–256 letters, numbers, `_` or `-`. Retrieve the generated bootstrap token locally:
+
+```bash
+sudo awk -F= '/^COLLAB_TOKEN=/ {print $2}' /etc/jelo-colab.env
+```
 
 ### What the installer configures
 
 - Node.js 20+ and production-only dependencies.
 - Dedicated `jelo-colab` system user.
 - Root-owned application files in `/opt/jelo-colab`.
-- Workspace data in `/var/lib/jelo-colab` with service-user-only access.
+- Workspace, access-control, audit, and synchronization state in `/var/lib/jelo-colab`.
 - Root-only environment file at `/etc/jelo-colab.env`.
-- `systemd` restart policy and service sandboxing.
-- SHA-256 verification and server self-tests before service activation.
-- Local binding at `127.0.0.1:3000` by default.
+- systemd restart policy, service sandboxing, and localhost-only binding at `127.0.0.1:3000`.
+- SHA-256 verification and server regression tests before service activation.
 
-The installer supports apt-based Ubuntu/Debian systems. It does not install or configure a domain, firewall rules, Caddy/Nginx, or TLS certificates. For remote collaborators, put the service behind a TLS reverse proxy and connect using `wss://`. Do not expose plain `ws://` to the internet.
+The installer supports apt-based Ubuntu/Debian systems. It does not automatically configure your cloud firewall or domain DNS.
 
-Example Caddyfile (after installing Caddy and pointing the domain's DNS to this server):
+## Configure remote TLS/WSS with Caddy
 
-```caddy
-collab.example.com {
-    reverse_proxy 127.0.0.1:3000
-}
+Point a DNS A/AAAA record at the server and allow inbound TCP 80 and 443. Then run:
+
+```bash
+sudo /opt/jelo-colab/scripts/configure-caddy.sh collab.example.com
 ```
 
-Caddy can provision and renew the HTTPS certificate for the domain. The extension should then connect to `wss://collab.example.com`.
+The helper installs Caddy from its official Debian repository, backs up the previous Caddyfile, configures reverse proxying to `127.0.0.1:3000`, validates the configuration, and starts Caddy. Use `wss://collab.example.com` in VS Code. The Co-Lab server remains bound to localhost; do not expose plain `ws://` to the internet.
+
+## Configure workspace users and roles
+
+The bootstrap token grants administrator access only while a workspace has no entry in `access.json`. To use individual accounts, create the first workspace administrator. The first member must be an administrator, preventing accidental creation of a workspace with no admin.
+
+Run management commands as the service user so ownership and file permissions remain correct:
+
+```bash
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab \
+  node /opt/jelo-colab/manage-access.js add engineering alice admin
+```
+
+The CLI prints a new random token once. Store it in the user's VS Code Jelo Co-Lab configuration. It is stored in VS Code SecretStorage, not `settings.json`.
+
+Add another editor or viewer:
+
+```bash
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab \
+  node /opt/jelo-colab/manage-access.js add engineering bob editor
+
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab \
+  node /opt/jelo-colab/manage-access.js add engineering guest viewer
+```
+
+List members, rotate a token, or remove a member:
+
+```bash
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab \
+  node /opt/jelo-colab/manage-access.js list engineering
+
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab \
+  node /opt/jelo-colab/manage-access.js rotate engineering bob editor
+
+sudo -u jelo-colab env DATA_DIR=/var/lib/jelo-colab \
+  node /opt/jelo-colab/manage-access.js remove engineering guest
+```
+
+Roles:
+
+| Role | Capabilities |
+|---|---|
+| `admin` | Read, edit, upload, delete, rename, and manage membership offline through the server CLI. |
+| `editor` | Read, edit, upload, delete, and rename. Cannot manage membership. |
+| `viewer` | Read documents/files and see presence. Mutating operations are rejected by the server. |
+
+Tokens are stored as salted scrypt hashes in `/var/lib/jelo-colab/access.json`. The CLI writes membership changes to the administrative audit log and prevents removing or demoting the last admin. Once a workspace has a managed membership entry, the bootstrap token no longer bypasses membership checks for that workspace.
 
 ## Install the VS Code extension
 
-1. Download `jelofen-co-lab-v1.5.4.vsix` from the GitHub Release.
+1. Download `jelofen-co-lab-v1.7.0.vsix` from the GitHub Release.
 2. In VS Code, open **Extensions** (`Ctrl+Shift+X`).
 3. Select `...` → **Install from VSIX...** and choose the downloaded file.
-4. Open a workspace file.
-5. Run **Jelo Co-Lab: Set Configuration**.
-6. Enter your server URL, workspace ID, server token and a unique user ID.
-7. Run **Jelo Co-Lab: Start Connection**.
+4. Open a file inside a workspace.
+5. Run **Jelo Co-Lab: Setup and Test Connection**.
+6. Enter the server URL (`ws://localhost:3000` for local testing or remote `wss://`), workspace ID, your workspace-member token, and a unique user ID.
+7. Review the workspace folders and connect.
 
-Use `ws://localhost:3000` only for local testing. Remote servers must use `wss://`. The extension stores the token in VS Code SecretStorage, not `settings.json`.
+The Jelo Co-Lab activity bar contains three views: **Collaborators**, **Transfer Queue**, and **Conflicts**. The status bar reports connection state, collaborator count, latency, and role. The Command Palette also exposes connection, synchronization, transfer, conflict, and diagnostics commands.
 
-All collaborators on the same server currently share one server token. They must use the same server URL, workspace ID and token, but distinct user IDs. Per-workspace roles, membership and token rotation are later security work.
+## Phase 3 capabilities: user experience and recovery
 
-## Server debugging
+- **Guided onboarding:** validates the server URL, checks `/healthz`, captures a workspace ID and SecretStorage token, previews the local workspace folders, then joins the workspace.
+- **Collaborator sidebar:** shows connected user IDs and the documents each collaborator has open. Selecting a collaborator lets you jump to one of their shared documents.
+- **Transfer queue:** shows queued, uploading, downloading, completed, and failed files. Transfers can be paused/resumed and retried per file. Upload queues survive extension restarts.
+- **Conflict center:** lets users open the local file, keep local content, accept the server copy, accept a remote deletion, or resolve a remote rename. Local unsaved text is saved to recovery storage before a remote replacement/deletion.
+- **Offline manifest reconciliation:** on join/reconnect, compares local and server manifests (path, size, SHA-256) to discover remote creates, deletes and changes. It detects a straightforward offline rename when exactly one new remote path matches the last-known hash. Ambiguous changes are presented as conflicts rather than guessed.
+- **Presence/network feedback:** heartbeats detect stale sessions, latency appears in the status bar and diagnostics, and reconnection uses bounded exponential backoff.
+- **Accessibility:** tree items expose accessible labels, empty views have action links, and primary flows are available from the Command Palette.
+
+## Phase 4 capabilities: production operations
+
+- **Scoped accounts:** workspace member tokens, `admin`/`editor`/`viewer` roles, scrypt-hashed tokens, token rotation, last-admin protection, and audit records.
+- **Binary chunk uploads:** 48 KiB binary frames, SHA-256 verification, ordered acknowledgments, server-side partial files, and durable resume from the last persisted chunk after server restart. Each file is limited to 10 MiB; global active upload storage is capped.
+- **Rate limiting:** control messages and bulk binary chunks use separate token buckets. Bulk traffic remains bounded by per-file size and global in-flight byte quotas.
+- **Download integrity:** binary chunks are acknowledged and retried, and the complete payload is hash-verified before local apply. A disconnected download restarts on reconnect; upload partials are durable across server restarts.
+- **Audit trail:** authentication failures, joins, file writes/deletes/moves, stale sessions, shutdowns and CLI membership changes are written to `audit.jsonl` with one rotated backup.
+- **Backup/restore:** consistent backup archives include workspace data, document state, membership store, audit logs, and the server environment file. Restore verifies the checksum, rejects links/special files and unexpected paths, and preserves a pre-restore copy.
+- **Scheduled backups:** install a daily systemd timer with `/opt/jelo-colab/scripts/install-backup-timer.sh`.
+- **Build provenance:** GitHub Actions creates build-provenance attestations for both release payloads.
+- **Operational docs:** license, contribution guide, support policy, security policy, protocol documentation and runbooks are included.
+
+### Backup and restore
+
+Create a consistent manual backup:
+
+```bash
+sudo /opt/jelo-colab/scripts/backup-server.sh
+```
+
+Install a daily backup timer:
+
+```bash
+sudo /opt/jelo-colab/scripts/install-backup-timer.sh
+systemctl list-timers jelo-colab-backup.timer --no-pager
+```
+
+Restore a verified backup (the script preserves the previous data and environment files):
+
+```bash
+sudo /opt/jelo-colab/scripts/restore-server.sh /var/backups/jelo-colab/jelo-colab-YYYYMMDDTHHMMSSZ.tar.gz
+```
+
+Backups default to `/var/backups/jelo-colab`, are root-readable only, and retain 30 days by default. Set `RETENTION_DAYS` to change retention. Test restores on a staging server before relying on backups for disaster recovery.
+
+## Server diagnostics
 
 ```bash
 sudo systemctl status jelo-colab
@@ -82,17 +183,18 @@ Useful paths:
 
 | Purpose | Path |
 |---|---|
-| Application | `/opt/jelo-colab` |
-| Environment and secret | `/etc/jelo-colab.env` |
-| Workspace data | `/var/lib/jelo-colab/workspaces` |
+| Application and admin CLI | `/opt/jelo-colab` |
+| Environment/bootstrap secret | `/etc/jelo-colab.env` |
+| Workspace files, access store, document state and audit log | `/var/lib/jelo-colab` |
 | Installer log | `/var/log/jelo-colab-install.log` |
-| systemd unit | `/etc/systemd/system/jelo-colab.service` |
+| Backup archive | `/var/backups/jelo-colab` |
+| systemd service | `/etc/systemd/system/jelo-colab.service` |
 
-Back up `/var/lib/jelo-colab` before upgrades. The installer keeps workspace data separate from the application directory.
+The health endpoint returns service status, version, uptime, active connection count, and process memory usage. It does not expose credentials or workspace contents.
 
 ## Build and test from source
 
-Requirements: Node.js 20+, npm, and `@vscode/vsce` for packaging.
+Requirements: Node.js 20+, npm, and `@vscode/vsce` for VSIX packaging.
 
 ```bash
 cd server
@@ -111,61 +213,22 @@ npm run compile
 npx --yes @vscode/vsce package
 ```
 
-## Phase 1.5.4: delivered scope
+Run the VS Code Extension Host suite (requires downloading VS Code and the test harness):
 
-- [x] Workspace ID and relative path validation.
-- [x] Symlink-component and special-file rejection in workspace data.
-- [x] Atomic file writes and nested directory creation on the server.
-- [x] Server-controlled shared-secret authentication with timing-safe comparison.
-- [x] Extension token storage through VS Code SecretStorage.
-- [x] Local-only `ws://`; remote configuration requires `wss://`.
-- [x] WebSocket payload, file, edit-operation and cursor validation.
-- [x] File-size cap consistent with the current JSON-array protocol.
-- [x] Health endpoint, structured logs and pending-save flush on shutdown.
-- [x] Safe default exclusions for common secrets, repository internals and generated folders.
-- [x] Dirty-buffer protection for the initial remote snapshot.
-- [x] Pacing and progress reporting for directory pushes.
-- [x] Security and server integration tests.
-- [x] VSIX/server ZIP release workflow and SHA-256 sidecars.
-- [x] Ubuntu/Debian installer with checksum verification, service hardening and diagnostics.
+```bash
+npm install --no-save --package-lock=false @vscode/test-electron@2.5.2
+npm test
+```
 
-### Explicit Phase 1 boundaries
+The same Extension Host tests run in GitHub Actions on Ubuntu, Windows, and macOS. Linux uses `xvfb-run` for a headless display.
 
-This release does **not** solve concurrent edit conflicts with OT/CRDT, provide resumable/acknowledged transfers, synchronize deletes/renames, reconcile a dirty local file with a newer server snapshot, support multiple workspace roots, or queue offline edits. These are Phase 2/3 items and must not be represented as completed features.
+## Security and limits
 
-## Development TODO
+- Server requires a 24–256 character bootstrap token at startup.
+- Remote VS Code clients must use `wss://`; the server binds to localhost by default.
+- Paths are workspace-relative; symlinks, path traversal, special files, secret files and excluded directories are rejected.
+- File snapshots are limited to 10 MiB. Workspace manifests are capped at 20,000 entries and 512 MiB of scanned eligible content.
+- Document content is limited to 5 MiB and operation history is bounded. Very stale clients may need snapshot recovery.
+- There is no built-in web UI, cloud identity provider, end-to-end encryption, or multi-server/high-availability mode. The TLS reverse proxy encrypts transport between clients and the server; the server can read workspace content.
 
-### Phase 2 — Correctness of synchronization
-
-- [ ] Choose and document the consistency model: CRDT (recommended for multi-writer editing) or versioned OT.
-- [ ] Add document IDs, monotonically increasing versions, operation IDs and idempotent operation handling.
-- [ ] Add concurrent-edit tests for insert/insert, insert/delete, Unicode, multiline and selection changes.
-- [ ] Add snapshot version checks and explicit local/server conflict resolution; never silently overwrite dirty buffers.
-- [ ] Replace JSON byte arrays with chunked binary transfer.
-- [ ] Add server acknowledgments, retry, resume, cancellation and integrity hashes for every file transfer.
-- [ ] Synchronize create, rename, move and delete operations safely.
-- [ ] Add transfer manifests and ignore-rule support.
-- [ ] Support multiple open files and multiple workspace roots.
-- [ ] Add integration tests that simulate several clients editing and syncing simultaneously.
-
-### Phase 3 — UX and resilience
-
-- [ ] Add first-run onboarding with connection test and workspace join preview.
-- [ ] Add collaborator list, presence, names and stable remote cursor state per document.
-- [ ] Improve configuration-change reconnect and explicit connection/authentication states.
-- [ ] Add offline queue, exponential reconnect with jitter, heartbeat and stale-client cleanup.
-- [ ] Add sync preview, transfer progress, cancellation and per-file result summary.
-- [ ] Add configurable ignore patterns and a visible secret-file exclusion preview.
-- [ ] Add accessible keyboard-first commands, clear error recovery actions and localization.
-
-### Phase 4 — Production and public release
-
-- [ ] Add VS Code Extension Host end-to-end tests across supported VS Code versions and OSes.
-- [ ] Add stress tests for large projects, slow networks, server restarts and many collaborators.
-- [ ] Add backup/restore, schema/version migration and safe server upgrade tests.
-- [ ] Add per-workspace membership, role-based permissions, token rotation and audit events.
-- [ ] Add optional Caddy/Nginx TLS provisioning and documented firewall configuration.
-- [ ] Add public license after maintainer chooses the intended reuse terms.
-- [ ] Add contribution guide, support policy and release checklist.
-- [ ] Consider signed release assets and provenance/attestation.
-- [ ] Complete a third-party security review before advertising internet-facing production use.
+See [SECURITY.md](SECURITY.md) before exposing the service to an untrusted network.

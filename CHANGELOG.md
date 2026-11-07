@@ -1,17 +1,38 @@
 # Changelog
 
-## 1.5.4 - Phase 1 final hardening pass
+## [1.7.0] — Phase 3 and Phase 4 completion
 
-- Validated workspace IDs, relative paths, WebSocket message shapes, edit ranges, cursor positions, file sizes and authentication tokens.
-- Rejected symlink path components and special-file targets; wrote synchronized files through temporary files and atomic rename.
-- Added an unauthenticated `/healthz` endpoint for service monitoring and structured server logs.
-- Added graceful shutdown that flushes pending debounced document saves.
-- Removed the unused Express dependency; the server now uses Node's HTTP module and `ws` only.
-- Added server security and WebSocket integration tests.
-- Enforced secure URL configuration and server-token validation in the extension; stored the token with VS Code SecretStorage.
-- Prevented a remote initial snapshot from overwriting a dirty local document buffer.
-- Added safe default sync exclusions, a conservative per-file size limit, transfer pacing, progress and error reporting.
-- Added a checksum-verifying Ubuntu/Debian installer with a hardened systemd service and health check.
-- Added release automation for the VSIX, server ZIP, and SHA-256 sidecars.
+### Added
+- Guided onboarding with server health verification and local workspace preview.
+- Activity Bar views for collaborators, transfers and conflicts, with empty-state actions and accessible tree labels.
+- Collaborator document picker, transfer pause/resume/retry and conflict resolution for file modifications, deletions and renames.
+- Offline workspace-manifest reconciliation using path, size and SHA-256; simple remote renames are identified by last-known hash.
+- Workspace-scoped accounts with `admin`, `editor`, and `viewer` roles; server-enforced read-only viewers, scrypt-hashed tokens, CLI token rotation, membership changes, last-admin protection and audit events.
+- Binary 48 KiB file upload frames with SHA-256 verification and durable acknowledged-offset resume across server restarts.
+- Separate bulk-chunk rate limit bucket so large valid transfers do not exhaust the control-message budget.
+- Operational audit rotation, consistent backup/restore, daily backup timer helper, and official-repository Caddy TLS setup helper.
+- Cross-platform VS Code Extension Host CI workflow for Ubuntu, Windows and macOS.
+- GitHub build-provenance attestation for VSIX and standalone server release archives.
+- MIT license, contribution guide, support policy, operations and security documentation.
 
-This release does not include CRDT/OT merging, resumable transfers, delete/rename sync, or multi-root synchronization. See the roadmap in README.md.
+### Fixed
+- Prevented stale reconciliation state from overwriting a hash baseline recorded by a completed download.
+- Prevented automatic overwrite during remote file moves when a local destination already exists.
+- Added viewer-role write denial and regression coverage.
+- Fixed 10 MiB transfer stalls caused by using the control-message rate limiter for binary data chunks.
+- Kept paused upload requests in the durable transfer queue instead of dropping them.
+- Suppressed watcher feedback when applying an offline remote rename.
+
+### Validated
+- Server tests include 10 MiB binary transfer, durable upload resume after server restart, access-management CLI, viewer permissions, browser-Origin policy, and 40 concurrent WebSocket collaborators (20 server tests total).
+- TypeScript compilation, shell syntax, YAML parsing, archive integrity and SHA-256 checks are part of the release validation workflow.
+
+## [1.6.0] — Phase 2 synchronization engine
+- Server-authoritative, revisioned OT and reconnect history replay.
+- Durable local operation queue and recovery-copy conflict flow.
+- Per-document collaboration sessions and cursor transformation.
+- Acknowledged chunk file transfer, offline filesystem operations and idempotent server operations.
+
+## [1.5.4] — Phase 1 security foundation
+- Workspace path validation, symlink refusal and atomic writes.
+- Bootstrap authentication, SecretStorage, secure remote WSS policy and release installer foundation.

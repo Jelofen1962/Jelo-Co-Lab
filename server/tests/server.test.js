@@ -53,28 +53,36 @@ function nextMessage(client, predicate = () => true, timeoutMs = 5000) {
 
 function send(client, message) { client.send(JSON.stringify(message)); }
 
-async function join(client, token, userId, filePath = "src/main.txt") {
+async function join(client, token, userId, filePath = "src/main.txt", workspaceId = "team-1") {
   const joined = nextMessage(client, (message) => message.type === "joined");
   const init = nextMessage(client, (message) => message.type === "init" && message.filePath === filePath);
-  send(client, { type: "join", workspaceId: "team-1", userId, token, filePath });
+  send(client, { type: "join", workspaceId, userId, token, filePath });
   return { joined: await joined, init: await init };
+}
+
+function sendBinaryChunk(client, transferId, index, bytes) {
+  const requestId = crypto.randomUUID();
+  const header = Buffer.from(JSON.stringify({ type: "file_chunk_binary", transferId, index, requestId }));
+  const frame = Buffer.allocUnsafe(4 + header.length + bytes.length);
+  frame.writeUInt32BE(header.length, 0); header.copy(frame, 4); bytes.copy(frame, 4 + header.length);
+  client.send(frame, { binary: true });
 }
 
 async function uploadFile(client, filePath, bytes) {
   const transferId = crypto.randomUUID();
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const beginAck = nextMessage(client, (message) => message.type === "file_begin_ack" && message.transferId === transferId);
-  send(client, { type: "file_begin", transferId, path: filePath, size: bytes.length, mtime: Date.now() });
+  send(client, { type: "file_begin", transferId, path: filePath, size: bytes.length, mtime: Date.now(), sha256 });
   await beginAck;
   let index = 0;
   for (let offset = 0; offset < bytes.length; offset += 48 * 1024) {
     const chunkAck = nextMessage(client, (message) => message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index);
-    const payload = { type: "file_chunk", transferId, index, data: bytes.subarray(offset, offset + 48 * 1024).toString("base64") };
-    send(client, payload);
+    const payload = bytes.subarray(offset, offset + 48 * 1024);
+    sendBinaryChunk(client, transferId, index, payload);
     await chunkAck;
     if (index === 0) {
       const retryAck = nextMessage(client, (message) => message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index);
-      send(client, payload); // A timed-out chunk retry must not append the bytes twice.
+      sendBinaryChunk(client, transferId, index, payload); // Retried chunks must not append bytes twice.
       await retryAck;
     }
     index += 1;
@@ -115,6 +123,7 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
     const bJoin = await join(clientB, token, "bob");
     assert.equal(aJoin.init.content, "abcd");
     assert.equal(bJoin.init.content, "abcd");
+    assert.equal(aJoin.joined.role, "admin");
 
     const snapshotBlocked = nextMessage(clientA, (message) => message.type === "error");
     send(clientA, { type: "file_begin", transferId: "blocked-file-001", path: "src/main.txt", size: 1, mtime: Date.now() });
@@ -179,6 +188,13 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
     assert.equal(history.revision, 3);
     assert.equal(history.entries.length, 3);
 
+    // Workspace manifest is paged and contains stable hashes for eligible files only.
+    const manifestPage = nextMessage(clientA, (message) => message.type === "manifest_page" && message.page === 0);
+    send(clientA, { type: "manifest_get", page: 0, requestId: "manifest-test-0001" });
+    const manifest = await manifestPage;
+    assert.ok(manifest.entries.some((entry) => entry.path === "README.md" && /^[a-f0-9]{64}$/.test(entry.sha256)));
+    assert.ok(manifest.entries.some((entry) => entry.path === "src/main.txt"));
+
     // Checksum-protected chunks are acknowledged, stored, and downloadable by peers.
     const fileAvailable = nextMessage(clientB, (message) => message.type === "file_available" && message.path === "assets/blob.bin");
     const blob = crypto.randomBytes(130_000);
@@ -191,8 +207,13 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
       function acknowledge(message, phase, index) {
         send(clientB, { type: "download_ack", transferId: message.transferId, phase, ...(index === undefined ? {} : { index }), status: "ok" });
       }
-      function onDownload(raw) {
-        const message = JSON.parse(raw.toString());
+      function onDownload(raw, isBinary) {
+        let message;
+        if (isBinary) {
+          const buffer = Buffer.from(raw);
+          const headerLength = buffer.readUInt32BE(0);
+          message = { ...JSON.parse(buffer.subarray(4, 4 + headerLength).toString("utf8")), binaryData: buffer.subarray(4 + headerLength) };
+        } else message = JSON.parse(raw.toString());
         if (message.type === "download_begin" && message.path === "assets/blob.bin") {
           begin = message;
           // While the server waits for this download ACK, normal commands on the same
@@ -200,7 +221,7 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
           const resumeProbe = nextMessage(clientB, (item) => item.type === "resume_history" && item.filePath === "src/main.txt");
           send(clientB, { type: "resume", filePath: "src/main.txt", baseRevision: 0 });
           void resumeProbe.then(() => acknowledge(message, "begin"), reject);
-        } else if (begin && message.transferId === begin.transferId && message.type === "download_chunk") {
+        } else if (begin && message.transferId === begin.transferId && message.type === "download_chunk_binary") {
           receivedChunks.push(message);
           acknowledge(message, "chunk", message.index);
         } else if (begin && message.transferId === begin.transferId && message.type === "download_end") {
@@ -212,7 +233,7 @@ test("revisioned OT, resume, chunked file transfer, multi-file subscriptions and
     });
     send(clientB, { type: "file_get", path: "assets/blob.bin" });
     const downloaded = await download;
-    const received = Buffer.concat(downloaded.receivedChunks.map((message) => Buffer.from(message.data, "base64")));
+    const received = Buffer.concat(downloaded.receivedChunks.map((message) => message.binaryData));
     assert.equal(downloaded.complete.chunks, downloaded.receivedChunks.length);
     assert.deepEqual(received, blob);
 
@@ -292,6 +313,158 @@ test("rejects invalid workspace IDs and credentials", async (t) => {
     assert.equal((await auth).message, "Authentication failed");
   } finally {
     client?.close(); child.kill("SIGTERM");
+    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("file uploads resume from durable acknowledged chunk offset after server restart", async (t) => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-resume-test-"));
+  const workspace = path.join(temp, "workspaces", "team-resume");
+  await fs.mkdir(workspace, { recursive: true });
+  await fs.writeFile(path.join(workspace, "README.md"), "resume test");
+  const port = await reservePort();
+  const token = "phase-two-resume-token-0123456789abcdef";
+  const env = { ...process.env, HOST: "127.0.0.1", PORT: String(port), DATA_DIR: temp, COLLAB_TOKEN: token };
+  const startServer = () => spawn(process.execPath, [path.join(__dirname, "..", "index.js")], {
+    cwd: path.join(__dirname, ".."), env, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stopServer = async (child) => {
+    if (child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.once("exit", resolve));
+  };
+  let child = startServer();
+  let first;
+  let second;
+  try {
+    await waitForHealth(`http://127.0.0.1:${port}/healthz`, child);
+    first = await connect(`ws://127.0.0.1:${port}`);
+    await join(first, token, "same-user", "README.md", "team-resume");
+    const bytes = crypto.randomBytes(150_000);
+    const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+    const transferId = "resume-transfer-0001";
+    const beginAck = nextMessage(first, (message) => message.type === "file_begin_ack" && message.transferId === transferId);
+    send(first, { type: "file_begin", transferId, path: "assets/resume.bin", size: bytes.length, mtime: 1700000000000, sha256 });
+    await beginAck;
+    const firstChunkAck = nextMessage(first, (message) => message.type === "file_chunk_ack" && message.index === 0);
+    sendBinaryChunk(first, transferId, 0, bytes.subarray(0, 48 * 1024));
+    await firstChunkAck;
+    first.close();
+    await new Promise((resolve) => first.once("close", resolve));
+    await stopServer(child);
+
+    child = startServer();
+    await waitForHealth(`http://127.0.0.1:${port}/healthz`, child);
+    second = await connect(`ws://127.0.0.1:${port}`);
+    await join(second, token, "same-user", "README.md", "team-resume");
+    const resumedAck = nextMessage(second, (message) => message.type === "file_begin_ack" && message.transferId === transferId);
+    send(second, { type: "file_begin", transferId, path: "assets/resume.bin", size: bytes.length, mtime: 1700000000000, sha256 });
+    const resumed = await resumedAck;
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.nextIndex, 1);
+    let index = 1;
+    for (let offset = 48 * 1024; offset < bytes.length; offset += 48 * 1024, index += 1) {
+      const ack = nextMessage(second, (message) => message.type === "file_chunk_ack" && message.transferId === transferId && message.index === index);
+      sendBinaryChunk(second, transferId, index, bytes.subarray(offset, offset + 48 * 1024));
+      await ack;
+    }
+    const complete = nextMessage(second, (message) => message.type === "file_ack" && message.transferId === transferId);
+    send(second, { type: "file_end", transferId, sha256 });
+    await complete;
+    assert.deepEqual(await fs.readFile(path.join(workspace, "assets", "resume.bin")), bytes);
+  } finally {
+    first?.close(); second?.close(); await stopServer(child);
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("10 MiB binary transfer completes with matching SHA-256", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-large-file-test-"));
+  const workspace = path.join(temp, "workspaces", "large-team");
+  await fs.mkdir(workspace, { recursive: true });
+  await fs.writeFile(path.join(workspace, "README.md"), "large file test");
+  const port = await reservePort();
+  const token = "large-file-test-token-0123456789abcdef";
+  const child = spawn(process.execPath, [path.join(__dirname, "..", "index.js")], {
+    cwd: path.join(__dirname, ".."), env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), DATA_DIR: temp, COLLAB_TOKEN: token },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let client;
+  try {
+    await waitForHealth(`http://127.0.0.1:${port}/healthz`, child);
+    client = await connect(`ws://127.0.0.1:${port}`);
+    await join(client, token, "large-user", "README.md", "large-team");
+    const payload = crypto.randomBytes(10 * 1024 * 1024);
+    const ack = await uploadFile(client, "assets/large.bin", payload);
+    assert.equal(ack.size, payload.length);
+    assert.equal(ack.sha256, crypto.createHash("sha256").update(payload).digest("hex"));
+    const saved = await fs.readFile(path.join(workspace, "assets", "large.bin"));
+    assert.deepEqual(saved, payload);
+  } finally {
+    client?.close(); child.kill("SIGTERM");
+    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("viewer members can read but cannot edit or upload files", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-viewer-test-"));
+  const workspace = path.join(temp, "workspaces", "role-team");
+  await fs.mkdir(workspace, { recursive: true });
+  await fs.writeFile(path.join(workspace, "README.md"), "read only");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const token = "viewer-token-0123456789abcdef012345";
+  const hash = crypto.scryptSync(token, salt, 64).toString("hex");
+  await fs.writeFile(path.join(temp, "access.json"), JSON.stringify({ version: 1, workspaces: {
+    "role-team": { members: { reader: { salt, hash, role: "viewer", createdAt: new Date().toISOString() } } },
+  } }));
+  const port = await reservePort();
+  const bootstrap = "role-team-bootstrap-token-0123456789";
+  const child = spawn(process.execPath, [path.join(__dirname, "..", "index.js")], {
+    cwd: path.join(__dirname, ".."), env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), DATA_DIR: temp, COLLAB_TOKEN: bootstrap },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let client;
+  try {
+    await waitForHealth(`http://127.0.0.1:${port}/healthz`, child);
+    client = await connect(`ws://127.0.0.1:${port}`);
+    const joined = await join(client, token, "reader", "README.md", "role-team");
+    assert.equal(joined.joined.role, "viewer");
+    const editError = nextMessage(client, (message) => message.type === "error");
+    send(client, { type: "edit", filePath: "README.md", clientId: "reader", opId: "viewer-op-0001", baseRevision: 0, ops: [{ insert: "nope" }] });
+    assert.match((await editError).message, /read-only/);
+    const uploadError = nextMessage(client, (message) => message.type === "error");
+    send(client, { type: "file_begin", transferId: "viewer-upload-01", path: "new.txt", size: 1, mtime: Date.now() });
+    assert.match((await uploadError).message, /read-only/);
+    assert.equal(await fs.readFile(path.join(workspace, "README.md"), "utf8"), "read only");
+  } finally {
+    client?.close(); child.kill("SIGTERM");
+    await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("browser WebSocket origins are restricted to the configured allowlist", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "jelo-origin-test-"));
+  const port = await reservePort();
+  const token = "origin-test-token-0123456789abcdef";
+  const child = spawn(process.execPath, [path.join(__dirname, "..", "index.js")], {
+    cwd: path.join(__dirname, ".."), env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), DATA_DIR: temp,
+      COLLAB_TOKEN: token, ALLOWED_ORIGINS: "https://trusted.example" }, stdio: ["ignore", "ignore", "pipe"],
+  });
+  const originResult = (origin) => new Promise((resolve, reject) => {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { Origin: origin } });
+    client.once("open", () => { if (origin === "https://trusted.example") { client.close(); resolve("allowed"); } });
+    client.once("close", (code) => resolve(code));
+    client.once("error", reject);
+  });
+  try {
+    await waitForHealth(`http://127.0.0.1:${port}/healthz`, child);
+    assert.equal(await originResult("https://trusted.example"), "allowed");
+    assert.equal(await originResult("https://evil.example"), 1008);
+  } finally {
+    child.kill("SIGTERM");
     await new Promise((resolve) => child.exitCode !== null ? resolve() : child.once("exit", resolve));
     await fs.rm(temp, { recursive: true, force: true });
   }

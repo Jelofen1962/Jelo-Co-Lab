@@ -1,55 +1,75 @@
-# Jelo Co-Lab Development TODO
+# Jelo Co-Lab delivery status and remaining TODO
+
+Version: 1.7.0
+
+This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the cross-platform GitHub workflow or an independent security review has already run.
 
 ## Phase 1 — Security and release foundation
 
-- [x] Validate workspace IDs and relative paths at the server boundary.
-- [x] Reject symlink components and special-file targets.
-- [x] Use temporary files and atomic rename for server-side writes.
-- [x] Require a strong server-side token and compare it in constant time.
-- [x] Store the token using VS Code SecretStorage.
-- [x] Require `wss://` for remote server configuration.
-- [x] Validate incoming messages, edit ranges, cursors and file sizes.
-- [x] Add health endpoint, structured logs and graceful save flushing.
-- [x] Add safe sync exclusions and a conservative 700 KB file limit.
-- [x] Protect dirty local buffers from initial remote snapshots.
-- [x] Pace directory pushes and report progress/errors.
-- [x] Add server security and WebSocket integration tests.
-- [x] Build VSIX and server ZIP in GitHub Actions with SHA-256 sidecars.
-- [x] Add checksum-verifying Ubuntu/Debian installer and hardened systemd service.
-- [x] Document diagnostics, deployment limits and the next phases.
+- [x] Validate workspace IDs and file paths at server boundaries.
+- [x] Reject traversal, symlink and special-file escapes.
+- [x] Atomic writes and bounded payload validation.
+- [x] Server-controlled workspace token authentication.
+- [x] VS Code SecretStorage for invitation credentials.
+- [x] Require secure transport for non-local servers.
+- [x] Safe sync exclusions and file-size limits.
+- [x] Linux systemd deployment and diagnostics.
+- [x] GitHub VSIX/server ZIP release workflow and checksums.
 
-## Phase 2 — Synchronization correctness
+## Phase 2 — Synchronization engine
 
-- [ ] Pick a concurrency model: CRDT or versioned OT.
-- [ ] Add document IDs, versions, operation IDs and idempotency.
-- [ ] Test simultaneous edits, Unicode, multiline changes and selection updates.
-- [ ] Add explicit local/server snapshot conflict resolution.
-- [ ] Replace JSON number arrays with chunked binary transfers.
-- [ ] Add file transfer acknowledgments, retry, resume, cancellation and hashes.
-- [ ] Synchronize create, rename, move and delete operations.
-- [ ] Add transfer manifests and configurable ignore rules.
-- [ ] Support multiple open documents and multiple workspace roots.
-- [ ] Add multi-client integration tests and deterministic replay tests.
+- [x] Server-authoritative revisioned Operational Transformation.
+- [x] Deterministic operation ordering and stale-history handling.
+- [x] Durable local operation outbox and reconnect replay.
+- [x] Protect dirty documents during initial snapshot/recovery.
+- [x] Chunked binary transfers with SHA-256 verification.
+- [x] Acknowledgment, retry, resume and duplicate-chunk protection.
+- [x] Offline file operation queue for rename/delete.
+- [x] Multiple document subscriptions and multi-root path handling.
+- [x] Remote cursor updates and position transformation.
 
-## Phase 3 — UX and resilience
+## Phase 3 — Product experience and offline recovery
 
-- [ ] Add first-run setup and connection diagnostics.
-- [ ] Show collaborator roster, presence and stable remote cursors.
-- [ ] Improve auth/connection state transitions and configuration reconnect.
-- [ ] Add heartbeat, stale-client cleanup and reconnect backoff with jitter.
-- [ ] Add offline queue and recovery after server/network outages.
-- [ ] Add dry-run sync preview, cancellation and detailed per-file outcomes.
-- [ ] Add configurable ignore patterns and visible secret exclusions.
-- [ ] Accessibility pass for keyboard navigation, status labels and notifications.
+- [x] First-run onboarding and connection test.
+- [x] Collaborator, transfer queue and conflict tree views.
+- [x] Connection role/latency diagnostics.
+- [x] Pause/resume and retry transfer controls.
+- [x] Remote workspace manifest with pagination and bounds.
+- [x] Reconcile offline file additions, modifications and deletions.
+- [x] Detect unambiguous offline renames by content hash.
+- [x] Explicit local/remote conflict choices and recovery copies.
+- [x] Avoid reverse-sync loops for locally applied remote filesystem operations.
+- [ ] Usability review with real users and screen-reader/keyboard-only testing.
 
-## Phase 4 — Production and public release
+## Phase 4 — Production hardening
 
-- [ ] Add VS Code Extension Host E2E tests across supported OS/VS Code versions.
-- [ ] Stress-test large repositories, slow networks and many collaborators.
-- [ ] Add backup/restore and safe upgrade/migration tests.
-- [ ] Add per-workspace memberships, roles, token rotation and audit events.
-- [ ] Add optional TLS proxy provisioning and firewall guidance.
-- [ ] Choose and add an explicit license.
-- [ ] Add contribution, support and release policies.
-- [ ] Add signed release assets and provenance/attestation where practical.
-- [ ] Arrange independent security review before claiming internet-facing production readiness.
+- [x] Workspace roles: admin, editor and viewer.
+- [x] Member add/remove/token rotation CLI with last-admin protection.
+- [x] Hashed member tokens and redacted access audit events.
+- [x] Origin allowlist for browser-originated connections.
+- [x] Heartbeats, stale-client cleanup and non-sensitive health endpoint.
+- [x] Audit log with bounded rotation.
+- [x] Durable upload partials across server restarts.
+- [x] Per-file and per-workspace transfer bounds.
+- [x] Separate bulk transfer flow control from control-message rate limiting.
+- [x] Linux systemd hardening.
+- [x] Caddy TLS reverse-proxy setup script.
+- [x] Backup/restore scripts with checksums, path validation and pre-restore copies.
+- [x] Daily backup timer installer.
+- [x] CI workflow for server checks and Windows/macOS/Linux VS Code Extension Host tests.
+- [x] Release workflow with package-version gate, audit, VSIX/server ZIP, checksums and build provenance.
+- [x] MIT license, contribution guide, support guide and security policy.
+- [ ] Run GitHub CI on all three operating systems and retain passing run links.
+- [ ] Run a release-tag workflow and verify actual VSIX installation in clean VS Code profiles.
+- [ ] Deploy to a real Linux host behind a real domain/TLS proxy; verify install, reboot, backup and restore.
+- [ ] Perform an independent security review / penetration test before broad public production use.
+- [ ] Measure behavior with representative repositories and more than 40 active collaborators; tune only from observed results.
+
+## Known limits
+
+- Live concurrent editing needs a connection to the authoritative server. Disconnected edits are queued and replayed; this is not a peer-to-peer CRDT.
+- Workspace reconciliation is user-mediated when both local and remote versions changed. Ambiguous rename matches are surfaced as conflicts rather than guessed.
+- The protocol currently uses bounded 10 MiB per-file transfers. Larger files require a future streaming/chunk-store design.
+- The stress test covers 40 simultaneous local WebSocket clients, not an Internet-scale or distributed multi-node deployment.
+- The server is single-node and stores state on local disk. Horizontal scaling and shared storage are intentionally out of scope until a measured requirement exists.
+- Caddy, systemd and backup/restore scripts are syntax-checked and designed for Ubuntu/Debian, but the current build environment is not a disposable real Linux host for full deployment validation.

@@ -1,31 +1,32 @@
-# Jelo Co-Lab for VS Code
+# Jelo Co-Lab for Visual Studio Code
 
-Connect a VS Code workspace to a self-hosted Jelo Co-Lab server.
+Jelo Co-Lab provides self-hosted collaborative editing, workspace file synchronization, collaborator presence, transfer controls, and conflict resolution.
 
-## Setup
+## Quick start
 
-1. Install the released `.vsix` in VS Code using **Extensions → ... → Install from VSIX...**.
-2. Open a file inside the workspace.
-3. Run **Jelo Co-Lab: Set Configuration**.
-4. Enter the WebSocket server URL, workspace ID, server token, and a unique user ID.
-5. Run **Jelo Co-Lab: Start Connection**.
+1. Install the `.vsix` from the project's GitHub Releases page.
+2. Open the project folder (or a multi-root workspace).
+3. Run **Jelo Co-Lab: Quick Start** from the Command Palette.
+4. Enter the server URL, workspace ID, invitation token, and a display name.
+5. Confirm the workspace folders and connect.
 
-Use `ws://localhost:3000` only for local testing. Use `wss://` behind a TLS reverse proxy for remote servers. The token is stored in VS Code SecretStorage, not workspace settings.
+For remote servers, use `wss://`. Plain `ws://` is intended for localhost development only. Ask the server administrator for an invitation token and role. Never put tokens in workspace settings or commit them to Git.
 
-The server token must be 24-256 characters using letters, numbers, `_` or `-`. The server currently uses one shared token for all workspaces hosted by that server. Every collaborator must use the same server URL, workspace ID and token, but a distinct user ID.
+## Main controls
 
-## Commands
+- **Jelo Co-Lab: Reconcile Workspace** compares the local workspace with the server manifest and presents conflict choices where both sides changed.
+- **Jelo Co-Lab: Push/Sync Directory** starts a selected directory synchronization.
+- **Jelo Co-Lab: Pause Transfers / Resume Transfers** controls the transfer queue.
+- **Jelo Co-Lab: Show Conflicts** opens the conflict center.
+- **Jelo Co-Lab: Show Diagnostics** displays connection, role, latency, and transfer state.
+- The **Collaborators**, **Transfer Queue**, and **Conflicts** views are available in the Explorer.
 
-- **Jelo Co-Lab: Quick Start**: configures a local server URL and derives a workspace ID from the folder name.
-- **Jelo Co-Lab: Set Configuration**: securely saves connection details.
-- **Jelo Co-Lab: Start Connection**: connects and authenticates the active editor file.
-- **Jelo Co-Lab: Disconnect**: stops the connection and automatic reconnects.
-- **Jelo Co-Lab: Push/Sync Directory**: sends eligible files sequentially with pacing; files larger than 700,000 bytes are skipped.
+## Security and limitations
 
-## Default exclusions
+The server assigns permissions. Viewers can read and receive files but cannot edit or upload. Editors can collaborate and change files. Administrators can manage workspace members using the server's `manage-access.js` command.
 
-For safety, the extension does not synchronize `.git`, `.vscode`, `node_modules`, `.idea`, `.next`, `dist`, `build`, `coverage`, `.env*`, private-key/certificate files, `id_rsa`, `id_ed25519`, `credentials.json`, or `secrets.json`.
+The collaboration engine uses server-authoritative Operational Transformation. It requires an active connection for live editing. Local operations are queued while disconnected and replayed after reconnect when the server still has the required history; if history has expired, the extension offers snapshot recovery rather than silently overwriting local edits.
 
-## Phase 1 limitations
+Workspace manifest reconciliation detects offline additions, modifications, deletions, and unambiguous renames. Ambiguous rename matches are not guessed. Large files are transferred in checksummed, acknowledged chunks with a 10 MiB per-file limit. Excluded files are never uploaded.
 
-The initial snapshot will not replace a dirty local editor buffer. If local and server files differ, resolve the conflict manually. Concurrent edit merging, acknowledged/resumable file transfers, rename/delete propagation, multi-root workspaces and offline recovery remain later-phase work.
+See the repository's root README and `docs/PHASE-3-4.md` for server installation, access management, backup/restore, limits, and operational guidance.

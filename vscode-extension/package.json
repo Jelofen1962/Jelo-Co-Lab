@@ -1,8 +1,8 @@
 {
   "name": "jelofen-co-lab",
   "displayName": "Jelofen's Co-lab",
-  "description": "Self-hosted collaborative editing for VS Code",
-  "version": "1.5.4",
+  "description": "Self-hosted collaborative editing with OT, workspace reconciliation, presence and reliable transfer queues",
+  "version": "1.7.0",
   "publisher": "jelofen",
   "engines": {
     "vscode": "^1.85.0"
@@ -11,12 +11,20 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:collab.start",
-    "onCommand:collab.setConfig",
-    "onCommand:collab.quickStart",
+    "onCommand:collab.pushDir",
+    "onCommand:collab.onboarding",
     "onCommand:collab.disconnect",
-    "onCommand:collab.pushDir"
+    "onCommand:collab.start",
+    "onCommand:collab.resumeTransfers",
+    "onCommand:collab.reconcile",
+    "onCommand:collab.retryPending",
+    "onCommand:collab.showDiagnostics",
+    "onCommand:collab.pauseTransfers",
+    "onCommand:collab.quickStart",
+    "onStartupFinished",
+    "onCommand:collab.leaveWorkspace",
+    "onCommand:collab.conflicts",
+    "onCommand:collab.setConfig"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -40,6 +48,42 @@
       {
         "command": "collab.pushDir",
         "title": "Jelo Co-Lab: Push/Sync Directory"
+      },
+      {
+        "command": "collab.retryPending",
+        "title": "Jelo Co-Lab: Retry Pending Synchronization"
+      },
+      {
+        "command": "collab.onboarding",
+        "title": "Jelo Co-Lab: Setup and Test Connection"
+      },
+      {
+        "command": "collab.reconcile",
+        "title": "Jelo Co-Lab: Reconcile Workspace"
+      },
+      {
+        "command": "collab.conflicts",
+        "title": "Jelo Co-Lab: Open Conflict Center"
+      },
+      {
+        "command": "collab.pauseTransfers",
+        "title": "Jelo Co-Lab: Pause File Transfers"
+      },
+      {
+        "command": "collab.resumeTransfers",
+        "title": "Jelo Co-Lab: Resume File Transfers"
+      },
+      {
+        "command": "collab.showDiagnostics",
+        "title": "Jelo Co-Lab: Show Network Diagnostics"
+      },
+      {
+        "command": "collab.leaveWorkspace",
+        "title": "Jelo Co-Lab: Leave Workspace"
+      },
+      {
+        "command": "collab.showCollaboratorFiles",
+        "title": "Jelo Co-Lab: Show Collaborator Documents"
       }
     ],
     "configuration": {
@@ -60,15 +104,102 @@
           "type": "string",
           "default": "",
           "description": "Unique collaborator ID. Generated automatically when empty."
+        },
+        "collab.excludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional workspace-relative glob patterns excluded from file synchronization (for example **/*.log or generated/**). Built-in secret and repository exclusions cannot be overridden."
+        },
+        "collab.autoReconcile": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer a manifest-based reconciliation after connecting or reconnecting."
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "jelo-colab",
+          "title": "Jelo Co-Lab",
+          "icon": "resources/jelo-colab.svg"
+        }
+      ]
+    },
+    "views": {
+      "jelo-colab": [
+        {
+          "id": "jelo.collaborators",
+          "name": "Collaborators"
+        },
+        {
+          "id": "jelo.transfers",
+          "name": "Transfer Queue"
+        },
+        {
+          "id": "jelo.conflicts",
+          "name": "Conflicts"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "jelo.collaborators",
+        "contents": "Connect to a workspace to see collaborators and the documents they are editing. [Set up Jelo Co-Lab](command:collab.onboarding)"
+      },
+      {
+        "view": "jelo.transfers",
+        "contents": "File transfers appear here. You can retry failed transfers, or [sync a directory](command:collab.pushDir)."
+      },
+      {
+        "view": "jelo.conflicts",
+        "contents": "No unresolved synchronization conflicts. Conflicts discovered during reconciliation appear here."
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "collab.onboarding",
+          "when": "view == jelo.collaborators",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.reconcile",
+          "when": "view == jelo.collaborators",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.pushDir",
+          "when": "view == jelo.transfers",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.pauseTransfers",
+          "when": "view == jelo.transfers",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.resumeTransfers",
+          "when": "view == jelo.transfers",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.conflicts",
+          "when": "view == jelo.conflicts",
+          "group": "navigation"
+        }
+      ]
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "node ./test/runTest.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
@@ -86,5 +217,6 @@
   "bugs": {
     "url": "https://github.com/Jelofen1962/Jelo-Co-Lab/issues"
   },
-  "homepage": "https://github.com/Jelofen1962/Jelo-Co-Lab#readme"
+  "homepage": "https://github.com/Jelofen1962/Jelo-Co-Lab#readme",
+  "license": "MIT"
 }
