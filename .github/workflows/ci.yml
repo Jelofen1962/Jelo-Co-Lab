@@ -59,6 +59,9 @@ jobs:
         run: npm install --no-save --package-lock=false @vscode/test-electron@2.5.2
       - working-directory: vscode-extension
         run: npm run compile
+      - name: Validate Extension Host test entry point
+        working-directory: vscode-extension
+        run: node --check test/runTest.js && node --check test/suite/index.js
       - name: Run Extension Host tests (Linux)
         if: runner.os == 'Linux'
         working-directory: vscode-extension

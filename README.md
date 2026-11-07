@@ -1,6 +1,6 @@
 # Jelo Co-Lab
 
-Self-hosted collaborative editing for Visual Studio Code. **v1.7.3 completes the Phase 3 product experience and Phase 4 operational-hardening implementation.** It builds on the versioned Operational Transformation (OT) engine from Phase 2 and adds offline workspace reconciliation, a collaborator/activity sidebar, transfer and conflict centers, workspace-scoped accounts, binary resumable uploads, administrative audit events, backup/restore, TLS proxy automation, and cross-platform Extension Host CI.
+Self-hosted collaborative editing for Visual Studio Code. **v1.7.4 completes the Phase 3 product experience and Phase 4 operational-hardening implementation.** It builds on the versioned Operational Transformation (OT) engine from Phase 2 and adds offline workspace reconciliation, a collaborator/activity sidebar, transfer and conflict centers, workspace-scoped accounts, binary resumable uploads, administrative audit events, backup/restore, TLS proxy automation, and cross-platform Extension Host CI.
 
 The editor uses server-authoritative versioned OT. It is not a CRDT. The server serializes document operations, transforms edits against retained history, and persists the current revision plus bounded history for reconnect. See [the protocol reference](docs/PHASE-2-PROTOCOL.md) and [Phase 3/4 operations](docs/PHASE-3-4.md).
 
@@ -13,7 +13,7 @@ Each GitHub Release created from a `v*` tag contains:
 - SHA-256 sidecars for both release assets.
 - GitHub build-provenance attestations for the VSIX and server ZIP.
 
-The release workflow verifies tag/package version agreement, runs server checks and tests, compiles and packages the extension, checks that the `ws` runtime dependency is present in the VSIX, creates server assets, and publishes the release. The CI workflow also runs the Extension Host suite on Ubuntu, Windows, and macOS.
+The release workflow verifies tag/package version agreement, runs server checks and tests, compiles and packages the extension, checks that the `ws` runtime dependency is present in the VSIX, creates server assets, and publishes the release. Both CI and tagged releases run the Extension Host suite; CI runs it on Ubuntu, Windows, and macOS, while the release workflow gates publication on Ubuntu. The test suite uses Node.js built-in assertions and does not require Mocha. Test files and test-only dependencies are excluded from the published VSIX.
 
 ## Install the server on Ubuntu/Debian
 
@@ -28,7 +28,7 @@ The installer generates a strong server bootstrap token on a fresh install, reus
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.3 bash
+curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.4 bash
 ```
 
 To provide your own bootstrap token on a fresh install:
@@ -113,7 +113,7 @@ Tokens are stored as salted scrypt hashes in `/var/lib/jelo-colab/access.json`. 
 
 ## Install the VS Code extension
 
-1. Download `jelofen-co-lab-v1.7.3.vsix` from the GitHub Release.
+1. Download `jelofen-co-lab-v1.7.4.vsix` from the GitHub Release.
 2. In VS Code, open **Extensions** (`Ctrl+Shift+X`).
 3. Select `...` → **Install from VSIX...** and choose the downloaded file.
 4. Open a file inside a workspace.
@@ -194,7 +194,7 @@ The health endpoint returns service status, version, uptime, active connection c
 
 ## Build and test from source
 
-Requirements: Node.js 20+, npm, and `@vscode/vsce` for VSIX packaging.
+Requirements: Node.js 20+, npm, and `@vscode/vsce` for VSIX packaging. The Extension Host suite uses the lightweight Node.js assertion runner bundled with the repository; it does not require Mocha.
 
 ```bash
 cd server

@@ -1,6 +1,6 @@
 # Jelo Co-Lab delivery status and remaining TODO
 
-Version: 1.7.3
+Version: 1.7.4
 
 This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the cross-platform GitHub workflow or an independent security review has already run.
 

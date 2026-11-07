@@ -30,3 +30,15 @@ The collaboration engine uses server-authoritative Operational Transformation. I
 Workspace manifest reconciliation detects offline additions, modifications, deletions, and unambiguous renames. Ambiguous rename matches are not guessed. Large files are transferred in checksummed, acknowledged chunks with a 10 MiB per-file limit. Excluded files are never uploaded.
 
 See the repository's root README and `docs/PHASE-3-4.md` for server installation, access management, backup/restore, limits, and operational guidance.
+
+
+## Run Extension Host tests
+
+The suite uses Node.js built-in assertions and does not depend on Mocha. Install the VS Code test harness, then run the test command:
+
+```bash
+npm install --no-save --package-lock=false @vscode/test-electron@2.5.2
+npm test
+```
+
+The test module exports the `run()` function expected by the VS Code Extension Host test loader.

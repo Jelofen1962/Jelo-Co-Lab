@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.4] - Fix Extension Host test runner dependency
+
+- Removed the undeclared Mocha runtime requirement from the Extension Host test suite.
+- Replaced Mocha globals with a small dependency-free async test runner using Node.js built-in assertions.
+- Exported the `run()` entry point expected by the VS Code Extension Host test loader.
+- Kept `@vscode/test-electron` as the separately installed test harness; it is not shipped to extension users.
+- Excluded the Extension Host test files from the VSIX and pruned test-only dependencies before release packaging.
+- Added an Extension Host test gate to tagged-release automation.
+- Updated server and extension package versions and lockfile root metadata to 1.7.4.
+
+
 ## [1.7.3] - Production dependency security update and binary upload reliability
 
 - Updated the server and VS Code extension production dependency `ws` to 8.20.2, outside the vulnerable 8.0.0–8.20.1 range reported by npm audit.

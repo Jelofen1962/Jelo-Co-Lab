@@ -11,3 +11,5 @@ node_modules/typescript/**
 node_modules/undici-types/**
 node_modules/.bin/**
 node_modules/.package-lock.json
+# Test runner is only needed in the source repository, never in the VSIX.
+test/**
