@@ -106,10 +106,54 @@ async function writeWorkspaceFile(workspacesDir, workspaceId, relativePath, cont
   }
 }
 
+async function readWorkspaceFileBuffer(workspacesDir, workspaceId, relativePath) {
+  const target = await resolveSafeFilePath(workspacesDir, workspaceId, relativePath);
+  try {
+    return await fs.readFile(target);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function removeWorkspacePath(workspacesDir, workspaceId, relativePath) {
+  const target = getAbsoluteFilePath(workspacesDir, workspaceId, relativePath);
+  const root = path.resolve(workspacesDir, workspaceId);
+  await assertDirectory(path.resolve(workspacesDir), true);
+  await assertDirectory(root, true);
+  const parts = path.relative(root, target).split(path.sep);
+  let parent = root;
+  for (const part of parts.slice(0, -1)) {
+    parent = path.join(parent, part);
+    const stat = await fs.lstat(parent);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Unsafe parent directory");
+  }
+  const stat = await fs.lstat(target);
+  if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory())) throw new Error("Unsafe target type");
+  await fs.rm(target, { recursive: stat.isDirectory(), force: false });
+}
+
+async function moveWorkspaceFile(workspacesDir, workspaceId, fromPath, toPath) {
+  const source = await resolveSafeFilePath(workspacesDir, workspaceId, fromPath);
+  const destination = await resolveSafeFilePath(workspacesDir, workspaceId, toPath, true);
+  const sourceStat = await fs.lstat(source);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) throw new Error("Only regular files can be moved");
+  try {
+    await fs.lstat(destination);
+    throw new Error("Destination already exists");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  await fs.rename(source, destination);
+}
+
 module.exports = {
   validateWorkspaceId,
   getAbsoluteFilePath,
   resolveSafeFilePath,
   readWorkspaceFile,
   writeWorkspaceFile,
+  readWorkspaceFileBuffer,
+  removeWorkspacePath,
+  moveWorkspaceFile,
 };
