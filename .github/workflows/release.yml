@@ -33,9 +33,12 @@ jobs:
           cache: npm
           cache-dependency-path: vscode-extension/package-lock.json
 
-      - name: Install extension dependencies
+      - name: Refresh and verify extension lockfile metadata
         working-directory: vscode-extension
-        run: npm ci
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+          npm ci
 
       - name: Audit extension production dependencies
         working-directory: vscode-extension
