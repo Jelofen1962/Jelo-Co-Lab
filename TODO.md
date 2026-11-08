@@ -1,6 +1,6 @@
 # Jelo Co-Lab delivery status and remaining TODO
 
-Version: 1.7.9
+Version: 1.7.12
 
 This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the Windows and Ubuntu GitHub workflow or an independent security review has already run.
 
@@ -85,3 +85,12 @@ This checklist distinguishes implemented work from release gates that require a 
 - [x] Validate tag, manifest, and lockfile versions before platform builds.
 - [x] Refresh and verify registry lock metadata before every npm ci in CI/release.
 - [ ] Confirm the online Windows and Ubuntu GitHub Actions release jobs pass.
+
+
+## v1.7.12 release lockfile integrity correction
+
+- [x] Preserve a lockfile-consistent `ws@8.22.1` entry for clean install commands.
+- [x] Remove the placeholder entry immediately before npm registry refresh in CI, release jobs, and server installation.
+- [x] Require genuine npm `sha512` integrity metadata before audit, install, and publication.
+- [x] Include the lock refresh helper in the standalone server release archive.
+- [ ] Confirm online `npm ci` and production audit pass in GitHub Actions on Windows and Ubuntu.

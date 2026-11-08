@@ -32,16 +32,28 @@ for (const dir of packages) {
   lock.packages[''].version = version;
   lock.packages[''].dependencies = lock.packages[''].dependencies || {};
   lock.packages[''].dependencies.ws = '8.22.1';
-  lock.packages['node_modules/ws'] = lock.packages['node_modules/ws'] || {};
-  const wsEntry = lock.packages['node_modules/ws'];
-  const expectedWsUrl = 'https://registry.npmjs.org/ws/-/ws-8.22.1.tgz';
-  if (wsEntry.version !== '8.22.1' || wsEntry.resolved !== expectedWsUrl) {
-    // An older version's digest must never be reused for a different tarball.
-    delete wsEntry.integrity;
+  // Keep the lock graph complete for npm ci. Preserve an authentic integrity
+  // value only when it belongs to this exact tarball; otherwise omit it until
+  // refresh-ws-lockfile.cjs fetches the official registry dist.integrity.
+  const wsKey = 'node_modules/ws';
+  const existingWs = lock.packages[wsKey];
+  for (const key of Object.keys(lock.packages)) {
+    if (/(^|\/)node_modules\/ws$/.test(key) && key !== wsKey) delete lock.packages[key];
   }
-  wsEntry.version = '8.22.1';
-  wsEntry.resolved = expectedWsUrl;
-  // npm install --package-lock-only fills the authentic registry integrity; never invent a digest.
+  const expectedWsUrl = 'https://registry.npmjs.org/ws/-/ws-8.22.1.tgz';
+  const hasValidIntegrity = existingWs?.version === '8.22.1' &&
+    existingWs?.resolved === expectedWsUrl &&
+    typeof existingWs?.integrity === 'string' && /^sha512-[A-Za-z0-9+/]+=*$/.test(existingWs.integrity);
+  lock.packages[wsKey] = hasValidIntegrity ? existingWs : {
+    version: '8.22.1',
+    resolved: expectedWsUrl,
+    engines: { node: '>=10.0.0' },
+    peerDependencies: { bufferutil: '^4.0.1', 'utf-8-validate': '>=5.0.2' },
+    peerDependenciesMeta: {
+      bufferutil: { optional: true },
+      'utf-8-validate': { optional: true },
+    },
+  };
 
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);

@@ -1,6 +1,6 @@
 # Jelo Co-Lab
 
-> v1.7.9 is a release-only correction: package versions and lockfile graphs now match the tag, ws is pinned to 8.22.1, and release validation is implemented inline in GitHub Actions (no external verifier script is required) and runs before platform builds. No application behavior changes.
+> v1.7.12 is a release-only correction: package versions and lockfile roots are aligned with the tag, `ws` is pinned to 8.22.1, and the release verifier obtains the actual tarball URL and SHA-512 integrity directly from the official npm registry. No application behavior changes.
 
 Self-hosted collaborative editing for Visual Studio Code. The product functionality from v1.7.0 remains unchanged in this release-only patch. The release pipeline now checks server and extension package versions against the tag, verifies lockfile dependency graphs, refreshes registry integrity metadata before clean installs, and gates releases on Windows and Ubuntu Extension Host tests.
 
@@ -30,7 +30,7 @@ The installer generates a strong server bootstrap token on a fresh install, reus
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.9 bash
+curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.12 bash
 ```
 
 To provide your own bootstrap token on a fresh install:
@@ -115,7 +115,7 @@ Tokens are stored as salted scrypt hashes in `/var/lib/jelo-colab/access.json`. 
 
 ## Install the VS Code extension
 
-1. Download `jelofen-co-lab-v1.7.9.vsix` from the GitHub Release.
+1. Download `jelofen-co-lab-v1.7.12.vsix` from the GitHub Release.
 2. In VS Code, open **Extensions** (`Ctrl+Shift+X`).
 3. Select `...` → **Install from VSIX...** and choose the downloaded file.
 4. Open a file inside a workspace.
@@ -200,7 +200,7 @@ Requirements: Node.js 20+, npm, and `@vscode/vsce` for VSIX packaging. The Exten
 
 ```bash
 cd server
-npm install --package-lock-only --ignore-scripts
+node ../scripts/refresh-ws-lockfile.cjs
 npm ci
 npm run check
 npm test
@@ -211,7 +211,7 @@ In another terminal:
 
 ```bash
 cd vscode-extension
-npm install --package-lock-only --ignore-scripts
+node ../scripts/refresh-ws-lockfile.cjs
 npm ci
 npm run compile
 npx --yes @vscode/vsce package
@@ -242,13 +242,16 @@ See [SECURITY.md](SECURITY.md) before exposing the service to an untrusted netwo
 The server and extension pin the patched WebSocket runtime to `ws@8.22.1`. The committed lockfiles include the exact package graph; CI refreshes registry integrity metadata before clean installation and verifies it before release. For a local clean install, run from each package directory:
 
 ```bash
-npm install --package-lock-only --ignore-scripts
+node ../scripts/refresh-ws-lockfile.cjs
 npm ci
 ```
 
-Before creating a release tag, verify both packages match the intended tag:
+The refresh helper queries `npm view ws@8.22.1 dist --json` against the official npm registry and writes the published tarball URL and SHA-512 integrity into the existing lock entry. It does not delete the lock entry or rely on `npm install --package-lock-only` to recreate it; do not add or guess integrity hashes by hand.
+
+Before creating a release tag, refresh both lockfiles and verify that both packages match the intended tag. The release workflow performs the same sequence automatically before building:
 
 ```bash
-The release workflow validates both package manifests, lockfile roots, and the pinned ws runtime directly before building.
+node scripts/prepare-release.cjs v1.7.12
+node scripts/verify-release-version.cjs v1.7.12
 ```
 

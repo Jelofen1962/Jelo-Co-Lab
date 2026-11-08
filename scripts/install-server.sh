@@ -94,8 +94,8 @@ test -f "$TMP/extracted/server/package-lock.json"
 log "Installing and testing the release in a temporary staging directory"
 (
   cd "$TMP/extracted/server"
-  npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-  node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
+  node scripts/refresh-ws-lockfile.cjs
+  node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const s=p?.integrity?.slice(7); const b=Buffer.from(s || "", "base64"); if (p?.version !== "8.22.1" || p?.resolved !== "https://registry.npmjs.org/ws/-/ws-8.22.1.tgz" || b.length !== 64 || b.toString("base64") !== s) { console.error("Expected registry-resolved ws 8.22.1 with valid npm SHA-512 integrity metadata"); process.exit(1); }'
   npm ci --omit=dev --no-audit --no-fund
   npm run check
   npm test

@@ -29,14 +29,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/prepare-release.cjs
-      - name: Refresh lockfiles from npm registry
-        run: |
-          npm --prefix server install --package-lock-only --ignore-scripts
-          npm --prefix vscode-extension install --package-lock-only --ignore-scripts
-      - name: Verify exact versions and npm integrity metadata
+      - name: Verify exact versions and refresh npm integrity metadata
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUIRE_NPM_INTEGRITY: '1'
         run: node scripts/verify-release-version.cjs
 
   extension-host-platforms:
@@ -62,14 +57,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/prepare-release.cjs
-      - name: Refresh both lockfiles and verify release metadata
+      - name: Verify release metadata and refresh npm integrity
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUIRE_NPM_INTEGRITY: '1'
-        run: |
-          npm --prefix server install --package-lock-only --ignore-scripts
-          npm --prefix vscode-extension install --package-lock-only --ignore-scripts
-          node scripts/verify-release-version.cjs
+        run: node scripts/verify-release-version.cjs
       - name: Install extension dependencies
         working-directory: vscode-extension
         run: npm ci
@@ -115,14 +106,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/prepare-release.cjs
-      - name: Refresh lockfiles and verify release metadata
+      - name: Verify release metadata and refresh official npm integrity
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          REQUIRE_NPM_INTEGRITY: '1'
-        run: |
-          npm --prefix server install --package-lock-only --ignore-scripts
-          npm --prefix vscode-extension install --package-lock-only --ignore-scripts
-          node scripts/verify-release-version.cjs
+        run: node scripts/verify-release-version.cjs
       - name: Install, test, and audit server
         working-directory: server
         run: |
@@ -148,7 +135,7 @@ jobs:
           mkdir -p dist/server/scripts
           cp server/index.js server/security.js server/ot.js server/access.js server/manage-access.js server/package.json server/package-lock.json server/README.md dist/server/
           cp -R server/tests dist/server/tests
-          cp scripts/backup-server.sh scripts/restore-server.sh scripts/configure-caddy.sh scripts/install-backup-timer.sh dist/server/scripts/
+          cp scripts/backup-server.sh scripts/restore-server.sh scripts/configure-caddy.sh scripts/install-backup-timer.sh scripts/refresh-ws-lockfile.cjs dist/server/scripts/
           cp LICENSE SECURITY.md dist/server/
           chmod +x dist/server/scripts/*.sh
           (cd dist && zip -X -r "jelo-colab-server-${GITHUB_REF_NAME}.zip" server)

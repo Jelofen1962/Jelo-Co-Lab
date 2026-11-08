@@ -11,13 +11,13 @@ Thanks for helping improve Jelo Co-Lab. Keep changes focused, testable and compa
 
 ```bash
 cd server
-npm install --package-lock-only --ignore-scripts
+node ../scripts/refresh-ws-lockfile.cjs
 npm ci
 npm run check
 npm test
 
 cd ../vscode-extension
-npm install --package-lock-only --ignore-scripts
+node ../scripts/refresh-ws-lockfile.cjs
 npm ci
 npm run compile
 ```

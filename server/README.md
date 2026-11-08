@@ -1,6 +1,6 @@
 # Jelo Co-Lab Server
 
-Node.js 20+ WebSocket service. On a network-connected machine, refresh registry integrity metadata and install production dependencies with `npm install --package-lock-only --ignore-scripts && npm ci --omit=dev`; run `npm start`. The server requires `COLLAB_TOKEN` (24–256 letters, digits, `_` or `-`) and defaults to `127.0.0.1:3000`.
+Node.js 20+ WebSocket service. On a network-connected machine, refresh the `ws` lock entry and install production dependencies with `node scripts/refresh-ws-lockfile.cjs && npm ci --omit=dev`; run `npm start`. The server requires `COLLAB_TOKEN` (24–256 letters, digits, `_` or `-`) and defaults to `127.0.0.1:3000`.
 
 ## Environment
 
@@ -47,6 +47,7 @@ Tokens are random 256-bit values. Only scrypt salt/hash pairs are stored. The CL
 ## Checks and tests
 
 ```bash
+node scripts/refresh-ws-lockfile.cjs
 npm ci
 npm run check
 npm test
@@ -61,4 +62,4 @@ Use a reverse proxy with TLS/WSS, keep `DATA_DIR` writable only by the service a
 
 ## Release version
 
-This package is released with Jelo Co-Lab v1.7.9. The repository release preflight checks both package manifests and lockfile roots against the Git tag before packaging. The WebSocket runtime is pinned to 8.22.1.
+This package is released with Jelo Co-Lab v1.7.12. The repository release preflight checks both package manifests and lockfile roots against the Git tag before packaging. The WebSocket runtime is pinned to 8.22.1.

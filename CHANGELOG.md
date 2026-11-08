@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.7.12] - Reliable npm registry integrity refresh
+
+- Resolve `ws@8.22.1` tarball URL and SHA-512 integrity directly using `npm view` against the official npm registry.
+- Make `verify-release-version.cjs` refresh both package lockfiles automatically before validation.
+- Keep the `ws` package entry in the lock graph; stop deleting it and relying on `npm install --package-lock-only` to recreate it.
+- Use the same registry metadata refresh path in CI, tagged releases, and the standalone server installer.
+- Preserve Windows and Ubuntu as the supported Extension Host CI targets.
+- No application functionality changes.
+
+## [1.7.11] - Lockfile registry integrity refresh correction
+
+- Keep a valid `ws@8.22.1` lock entry so the checked-in manifests and lockfiles remain structurally synchronized for clean installs.
+- Explicitly remove the placeholder `ws` lock entry immediately before registry refresh, forcing npm to fetch authentic package integrity metadata.
+- Require a valid npm `sha512` integrity value in the release verifier and CI checks.
+- Apply the same refresh sequence to server CI, extension CI, tagged release jobs, and the Ubuntu server installer.
+- Include the lock refresh helper in the standalone server release ZIP.
+- No application functionality changes.
+
+
 ## [1.7.9] - Release workflow self-containment fix
 
 - Remove the release workflow dependency on a separately committed version-verifier script.

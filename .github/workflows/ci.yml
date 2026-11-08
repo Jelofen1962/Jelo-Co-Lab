@@ -22,8 +22,7 @@ jobs:
       - name: Refresh and verify server lockfile metadata
         working-directory: server
         run: |
-          npm install --package-lock-only --ignore-scripts
-          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
+          node ../scripts/refresh-ws-lockfile.cjs
           npm ci
       - working-directory: server
         run: npm run check
@@ -48,8 +47,7 @@ jobs:
       - name: Refresh and verify extension lockfile metadata
         working-directory: vscode-extension
         run: |
-          npm install --package-lock-only --ignore-scripts
-          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
+          node ../scripts/refresh-ws-lockfile.cjs
           npm ci
       - name: Audit extension production dependencies
         if: runner.os == 'Linux'
