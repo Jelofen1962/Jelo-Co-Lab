@@ -1,6 +1,6 @@
 {
   "name": "jelofen-co-lab-server",
-  "version": "1.7.5",
+  "version": "1.7.7",
   "private": true,
   "description": "Self-hosted WebSocket server for Jelo Co-Lab",
   "main": "index.js",
