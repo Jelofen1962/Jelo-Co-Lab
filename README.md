@@ -1,6 +1,8 @@
 # Jelo Co-Lab
 
-Self-hosted collaborative editing for Visual Studio Code. **v1.7.5 completes the Phase 3 product experience and Phase 4 operational-hardening implementation.** It builds on the versioned Operational Transformation (OT) engine from Phase 2 and adds offline workspace reconciliation, a collaborator/activity sidebar, transfer and conflict centers, workspace-scoped accounts, binary resumable uploads, administrative audit events, backup/restore, TLS proxy automation, and Windows and Ubuntu Extension Host CI.
+> v1.7.9 is a release-only correction: package versions and lockfile graphs now match the tag, ws is pinned to 8.22.1, and release validation is implemented inline in GitHub Actions (no external verifier script is required) and runs before platform builds. No application behavior changes.
+
+Self-hosted collaborative editing for Visual Studio Code. The product functionality from v1.7.0 remains unchanged in this release-only patch. The release pipeline now checks server and extension package versions against the tag, verifies lockfile dependency graphs, refreshes registry integrity metadata before clean installs, and gates releases on Windows and Ubuntu Extension Host tests.
 
 The editor uses server-authoritative versioned OT. It is not a CRDT. The server serializes document operations, transforms edits against retained history, and persists the current revision plus bounded history for reconnect. See [the protocol reference](docs/PHASE-2-PROTOCOL.md) and [Phase 3/4 operations](docs/PHASE-3-4.md).
 
@@ -28,7 +30,7 @@ The installer generates a strong server bootstrap token on a fresh install, reus
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.5 bash
+curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.9 bash
 ```
 
 To provide your own bootstrap token on a fresh install:
@@ -113,7 +115,7 @@ Tokens are stored as salted scrypt hashes in `/var/lib/jelo-colab/access.json`. 
 
 ## Install the VS Code extension
 
-1. Download `jelofen-co-lab-v1.7.5.vsix` from the GitHub Release.
+1. Download `jelofen-co-lab-v1.7.9.vsix` from the GitHub Release.
 2. In VS Code, open **Extensions** (`Ctrl+Shift+X`).
 3. Select `...` → **Install from VSIX...** and choose the downloaded file.
 4. Open a file inside a workspace.
@@ -198,6 +200,7 @@ Requirements: Node.js 20+, npm, and `@vscode/vsce` for VSIX packaging. The Exten
 
 ```bash
 cd server
+npm install --package-lock-only --ignore-scripts
 npm ci
 npm run check
 npm test
@@ -208,6 +211,7 @@ In another terminal:
 
 ```bash
 cd vscode-extension
+npm install --package-lock-only --ignore-scripts
 npm ci
 npm run compile
 npx --yes @vscode/vsce package
@@ -232,3 +236,19 @@ The Extension Host tests run in GitHub Actions on Windows and Ubuntu only. Ubunt
 - There is no built-in web UI, cloud identity provider, end-to-end encryption, or multi-server/high-availability mode. The TLS reverse proxy encrypts transport between clients and the server; the server can read workspace content.
 
 See [SECURITY.md](SECURITY.md) before exposing the service to an untrusted network.
+
+## Clean dependency installation
+
+The server and extension pin the patched WebSocket runtime to `ws@8.22.1`. The committed lockfiles include the exact package graph; CI refreshes registry integrity metadata before clean installation and verifies it before release. For a local clean install, run from each package directory:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+npm ci
+```
+
+Before creating a release tag, verify both packages match the intended tag:
+
+```bash
+The release workflow validates both package manifests, lockfile roots, and the pinned ws runtime directly before building.
+```
+

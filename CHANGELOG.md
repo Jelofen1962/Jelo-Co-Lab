@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.7.9] - Release workflow self-containment fix
+
+- Remove the release workflow dependency on a separately committed version-verifier script.
+- Validate tag, server and extension package versions, lockfile roots, and ws integrity metadata inline in GitHub Actions.
+- Keep server and extension manifests and lockfiles aligned at 1.7.9.
+- No application functionality changes.
+
+## [1.7.8] - Release metadata and reproducible build fix
+
+- Align server and VS Code extension package versions with the v1.7.8 tag.
+- Pin the patched WebSocket runtime dependency to ws 8.22.1 in both packages.
+- Add matching package-lock root metadata and the exact `node_modules/ws@8.22.1` lock entry so `npm ci` validates the dependency graph.
+- Add an early release preflight that checks both package manifests, both lockfiles, and the tag version before platform tests run. A stale server version now fails immediately with a clear diagnostic.
+- Ensure Windows and Ubuntu release jobs refresh and validate lockfiles before every npm ci.
+- No application behavior changes; this is a release and packaging correction only.
+
+
+## [1.7.6] - Fix release build lockfile refresh ordering
+
+- Refresh and verify the extension lockfile in the tagged-release Windows/Ubuntu test matrix before running `npm ci`.
+- Keep the lockfile refresh behavior aligned with the already-working CI workflow and the later packaging job.
+- Verify the resolved `ws` version is patched and has registry integrity metadata before clean installation.
+- Bump server and extension package versions and lockfile root metadata to 1.7.6.
+
 ## [1.7.5] - Limit supported CI targets to Windows and Ubuntu
 
 - Run VS Code Extension Host tests on `windows-latest` and `ubuntu-latest` only; macOS is intentionally excluded.

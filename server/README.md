@@ -57,3 +57,8 @@ Tests cover path and symlink safety, access roles and CLI token rotation, OT con
 ## Operational guidance
 
 Use a reverse proxy with TLS/WSS, keep `DATA_DIR` writable only by the service account, back it up with the provided `scripts/backup-server.sh`, and test restore before deployment. `GET /healthz` returns non-sensitive health information only.
+
+
+## Release version
+
+This package is released with Jelo Co-Lab v1.7.9. The repository release preflight checks both package manifests and lockfile roots against the Git tag before packaging. The WebSocket runtime is pinned to 8.22.1.

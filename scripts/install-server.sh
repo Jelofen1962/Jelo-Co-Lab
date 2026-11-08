@@ -95,7 +95,7 @@ log "Installing and testing the release in a temporary staging directory"
 (
   cd "$TMP/extracted/server"
   npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-  node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+  node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
   npm ci --omit=dev --no-audit --no-fund
   npm run check
   npm test

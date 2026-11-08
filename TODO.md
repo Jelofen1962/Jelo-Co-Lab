@@ -1,6 +1,6 @@
 # Jelo Co-Lab delivery status and remaining TODO
 
-Version: 1.7.5
+Version: 1.7.9
 
 This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the Windows and Ubuntu GitHub workflow or an independent security review has already run.
 
@@ -73,3 +73,15 @@ This checklist distinguishes implemented work from release gates that require a 
 - The stress test covers 40 simultaneous local WebSocket clients, not an Internet-scale or distributed multi-node deployment.
 - The server is single-node and stores state on local disk. Horizontal scaling and shared storage are intentionally out of scope until a measured requirement exists.
 - Caddy, systemd and backup/restore scripts are syntax-checked and designed for Ubuntu/Debian, but the current build environment is not a disposable real Linux host for full deployment validation.
+
+
+## v1.7.9 release-only correction
+
+- [x] Align both package manifests and lockfile roots to 1.7.9.
+- [x] Inline tag/version/dependency validation in the release workflow so no separately delivered helper script is required.
+- [x] Validate the pinned ws 8.22.1 lock entry and registry integrity metadata before release builds.
+- [x] Keep Windows and Ubuntu as the only Extension Host release targets.
+- [x] Pin ws to 8.22.1 in server and extension.
+- [x] Validate tag, manifest, and lockfile versions before platform builds.
+- [x] Refresh and verify registry lock metadata before every npm ci in CI/release.
+- [ ] Confirm the online Windows and Ubuntu GitHub Actions release jobs pass.
