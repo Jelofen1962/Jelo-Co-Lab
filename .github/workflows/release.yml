@@ -15,7 +15,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-release-version:
+    name: Verify release tag and package versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify tag, manifests, and lockfile roots
+        run: node scripts/verify-release-version.cjs "${GITHUB_REF_NAME}"
+
   extension-host-platforms:
+    needs: verify-release-version
     name: Extension Host (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -37,7 +51,7 @@ jobs:
         working-directory: vscode-extension
         run: |
           npm install --package-lock-only --ignore-scripts
-          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
           npm ci
 
       - name: Audit extension production dependencies
@@ -70,7 +84,7 @@ jobs:
         run: npm test
 
   test-and-release:
-    needs: extension-host-platforms
+    needs: [verify-release-version, extension-host-platforms]
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -85,16 +99,11 @@ jobs:
             server/package-lock.json
             vscode-extension/package-lock.json
 
-      - name: Verify tag matches package versions
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          node -e 'for (const file of ["server/package.json", "vscode-extension/package.json"]) { const p=require("./"+file); if (p.version !== process.argv[1]) { console.error(`${file}: ${p.version} != tag ${process.argv[1]}`); process.exit(1); } }' "$TAG_VERSION"
-
       - name: Install and test server
         working-directory: server
         run: |
           npm install --package-lock-only --ignore-scripts
-          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
           npm ci
           npm run check
           npm test
@@ -104,7 +113,7 @@ jobs:
         working-directory: vscode-extension
         run: |
           npm install --package-lock-only --ignore-scripts
-          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (a !== 8 || b < 20 || (b === 20 && c < 2) || !p.integrity) { console.error("Expected patched ws >=8.20.2 with registry integrity metadata"); process.exit(1); }'
+          node -e 'const p=require("./package-lock.json").packages["node_modules/ws"]; const [a,b,c]=String(p?.version||"0.0.0").split(".").map(Number); if (p?.version !== "8.22.1" || !p.integrity) { console.error("Expected ws 8.22.1 with registry integrity metadata"); process.exit(1); }'
           npm ci
           npm audit --omit=dev --audit-level=high
           npm run compile
