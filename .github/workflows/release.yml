@@ -25,8 +25,43 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Verify tag, manifests, and lockfile roots
-        run: node scripts/verify-release-version.cjs "${GITHUB_REF_NAME}"
+      - name: Refresh server lockfile metadata
+        working-directory: server
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Refresh extension lockfile metadata
+        working-directory: vscode-extension
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Verify tag, manifests, lockfile roots, and patched ws
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const expected = String(process.env.RELEASE_TAG || '').replace(/^v/, '');
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(expected)) {
+            console.error(`Invalid release tag: ${process.env.RELEASE_TAG || '(empty)'}`);
+            process.exit(2);
+          }
+          let failed = false;
+          for (const dir of ['server', 'vscode-extension']) {
+            const manifest = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
+            const lock = JSON.parse(fs.readFileSync(`${dir}/package-lock.json`, 'utf8'));
+            const lockedWs = lock.packages?.['node_modules/ws'];
+            const errors = [];
+            if (manifest.version !== expected) errors.push(`package.json version ${manifest.version} != ${expected}`);
+            if (lock.version !== expected) errors.push(`package-lock version ${lock.version} != ${expected}`);
+            if (lock.packages?.['']?.version !== expected) errors.push(`package-lock root version ${lock.packages?.['']?.version} != ${expected}`);
+            if (manifest.dependencies?.ws !== '8.22.1') errors.push(`package.json ws must be 8.22.1 (found ${manifest.dependencies?.ws})`);
+            if (lockedWs?.version !== '8.22.1' || !lockedWs.integrity) errors.push(`lockfile ws must resolve to 8.22.1 with integrity metadata (found ${lockedWs?.version || 'missing'})`);
+            if (errors.length) {
+              failed = true;
+              console.error(`${dir}: ${errors.join('; ')}`);
+            } else {
+              console.log(`${dir}: version ${expected}; ws ${lockedWs.version} with integrity metadata`);
+            }
+          }
+          if (failed) process.exit(1);
+          NODE
 
   extension-host-platforms:
     needs: verify-release-version
