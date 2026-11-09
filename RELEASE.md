@@ -5,8 +5,8 @@ This repository supports Windows and Ubuntu CI targets only.
 Before committing a release, run the following from the repository root (with access to the public npm registry):
 
 ```bash
-node scripts/prepare-release.cjs v1.7.12
-node scripts/verify-release-version.cjs v1.7.12
+node scripts/prepare-release.cjs v1.7.13
+node scripts/verify-release-version.cjs v1.7.13
 (cd server && npm ci)
 (cd vscode-extension && npm ci)
 ```
@@ -17,9 +17,11 @@ Then commit the changed manifests and lockfiles and push the matching tag:
 
 ```bash
 git add -A
-git commit -m "Prepare release v1.7.12"
-git tag v1.7.12
+git commit -m "Prepare release v1.7.13"
+git tag v1.7.13
 git push origin main --tags
 ```
 
 Each clean GitHub Actions job repeats the tag alignment and metadata verification before running `npm ci`. Both Windows and Ubuntu Extension Host jobs must pass before the release is published.
+
+The VSIX packaging job intentionally keeps development dependencies installed until `@vscode/vsce package` finishes: VSCE invokes `vscode:prepublish`, which runs TypeScript compilation. Do not run `npm prune --omit=dev` before packaging. VSCE packages production dependencies from the manifest; `.vscodeignore` excludes compiler and test files.

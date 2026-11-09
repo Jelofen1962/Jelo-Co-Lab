@@ -1,11 +1,10 @@
 # Changelog
 
-## [1.7.12] - Reliable npm registry integrity refresh
+## [1.7.13] - Fix VSIX packaging lifecycle
 
-- Resolve `ws@8.22.1` tarball URL and SHA-512 integrity directly using `npm view` against the official npm registry.
-- Make `verify-release-version.cjs` refresh both package lockfiles automatically before validation.
-- Keep the `ws` package entry in the lock graph; stop deleting it and relying on `npm install --package-lock-only` to recreate it.
-- Use the same registry metadata refresh path in CI, tagged releases, and the standalone server installer.
+- Keep TypeScript and other development dependencies installed until VSCE completes the `vscode:prepublish` lifecycle hook.
+- Remove the premature `npm prune --omit=dev` command that removed `tsc` before VSCE invoked the prepublish compile.
+- Verify the VSIX contains the production `ws` dependency and license, but does not include the TypeScript compiler.
 - Preserve Windows and Ubuntu as the supported Extension Host CI targets.
 - No application functionality changes.
 

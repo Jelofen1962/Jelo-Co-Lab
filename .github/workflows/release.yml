@@ -122,13 +122,21 @@ jobs:
         run: |
           npm ci
           npm audit --omit=dev --audit-level=high
+          # Keep devDependencies (especially TypeScript) installed while VSCE
+          # runs vscode:prepublish, which invokes tsc. Do not prune before VSCE.
+          test -x node_modules/.bin/tsc
           npm run compile
-          npm prune --omit=dev
+          test -s out/extension.js
           cp ../LICENSE LICENSE
           npx --yes @vscode/vsce package --out "jelofen-co-lab-${GITHUB_REF_NAME}.vsix"
           test -s "jelofen-co-lab-${GITHUB_REF_NAME}.vsix"
           unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -qx 'extension/node_modules/ws/package.json'
           unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -qx 'extension/LICENSE'
+          # VSCE must include production dependencies but not TypeScript dev tooling.
+          if unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -q '^extension/node_modules/typescript/'; then
+            echo 'TypeScript devDependency leaked into VSIX' >&2
+            exit 1
+          fi
           unzip -p "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" extension/package.json | node -e 'let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s); if (p.version !== process.env.GITHUB_REF_NAME.replace(/^v/, "") || p.dependencies?.ws !== "8.22.1" || p.license !== "MIT") process.exit(1);});'
       - name: Package server and checksums
         run: |
