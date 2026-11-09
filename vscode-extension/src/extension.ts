@@ -67,6 +67,8 @@ const transferStates = new Map<string, { state: string; detail?: string }>();
 let transferPaused = false;
 let latencyMs: number | undefined;
 let currentRole: "admin" | "editor" | "viewer" | undefined;
+let connectionState: "Disconnected" | "Connecting" | "Connected" = "Disconnected";
+let dashboardProvider: DashboardViewProvider | undefined;
 let reconcileRunning = false;
 
 class CoLabTreeItem extends vscode.TreeItem {
@@ -75,6 +77,7 @@ class CoLabTreeItem extends vscode.TreeItem {
     this.description = description;
     this.contextValue = contextValue;
     this.command = command;
+    this.tooltip = description ? `${label}\n${description}` : label;
     this.accessibilityInformation = { label: description ? `${label}, ${description}` : label, role: "treeitem" };
   }
 }
@@ -114,10 +117,177 @@ class CoLabTreeProvider implements vscode.TreeDataProvider<CoLabTreeItem> {
   }
 }
 
+class DashboardViewProvider implements vscode.WebviewViewProvider {
+  private view?: vscode.WebviewView;
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    view.webview.options = { enableScripts: true, localResourceRoots: [] };
+    view.webview.html = this.html(view.webview);
+    view.webview.onDidReceiveMessage(async (message: { type?: string; command?: string }) => {
+      if (message?.type === "ready") { this.refresh(); return; }
+      const allowed = new Set([
+        "collab.quickStart", "collab.disconnect", "collab.pushDir", "collab.reconcile",
+        "collab.pauseTransfers", "collab.resumeTransfers", "collab.conflicts",
+        "collab.showDiagnostics", "collab.retryPending", "collab.openTutorial",
+      ]);
+      if (message?.type === "command" && message.command && allowed.has(message.command)) {
+        try { await vscode.commands.executeCommand(message.command); }
+        catch (error) { vscode.window.showErrorMessage(`Jelo Co-Lab: ${(error as Error).message}`); }
+      }
+    }, undefined, this.context.subscriptions);
+    this.refresh();
+  }
+
+  refresh(): void {
+    if (this.view) void this.view.webview.postMessage({ type: "state", state: getDashboardState() });
+  }
+
+  private html(webview: vscode.Webview): string {
+    const nonce = crypto.randomBytes(16).toString("base64");
+    const csp = webview.cspSource;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${csp} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<title>Jelo Co-Lab</title>
+<style>
+:root{color-scheme:light dark;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-sideBar-background)}
+*{box-sizing:border-box}body{margin:0;padding:12px;background:var(--vscode-sideBar-background);color:var(--vscode-foreground)}
+.shell{display:grid;gap:12px;max-width:900px;margin:0 auto}.brand{display:flex;align-items:center;gap:9px}.mark{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);font-weight:800;font-size:15px}.brand h1{font-size:15px;margin:0;font-weight:700}.brand p{font-size:11px;margin:2px 0 0;color:var(--vscode-descriptionForeground)}
+.panel{border:1px solid var(--vscode-panel-border);border-radius:9px;padding:11px;background:var(--vscode-editorWidget-background,var(--vscode-sideBar-background));min-width:0}.status-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.status{display:inline-flex;align-items:center;gap:6px;font-weight:650;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:var(--vscode-descriptionForeground)}.status.connected .dot{background:var(--vscode-testing-iconPassed)}.status.connecting .dot{background:var(--vscode-editorWarning-foreground)}.status.disconnected .dot{background:var(--vscode-errorForeground)}.pill{border-radius:99px;padding:3px 8px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-size:10px;white-space:nowrap}.meta{display:grid;gap:5px;margin-top:10px;min-width:0}.line{display:flex;justify-content:space-between;gap:8px;font-size:11px}.line .value{color:var(--vscode-descriptionForeground);text-align:right;overflow-wrap:anywhere;min-width:0}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.stat{padding:9px;border-radius:7px;background:var(--vscode-sideBarSectionHeader-background);min-width:0}.stat strong{display:block;font-size:19px;line-height:1.3;font-weight:700}.stat span{font-size:10px;color:var(--vscode-descriptionForeground)}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--vscode-descriptionForeground);margin:0 0 8px}.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.action{min-height:34px;padding:7px 8px;border:1px solid var(--vscode-button-border,var(--vscode-panel-border));border-radius:6px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);font:inherit;font-size:11px;text-align:left;cursor:pointer;display:flex;align-items:center;gap:6px;justify-content:flex-start}.action:hover{background:var(--vscode-button-secondaryHoverBackground)}.action.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-color:transparent}.action:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}.action[disabled]{opacity:.5;cursor:not-allowed}.list{display:grid;gap:6px}.person{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--vscode-panel-border)}.person:last-child{border:0}.avatar{width:24px;height:24px;flex:0 0 24px;border-radius:50%;display:grid;place-items:center;color:white;font-size:10px;font-weight:700}.person-main{min-width:0}.person-name{font-size:11px;font-weight:650;overflow-wrap:anywhere}.person-files{font-size:10px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere;margin-top:2px}.empty{font-size:11px;color:var(--vscode-descriptionForeground);padding:3px 0}.footer{font-size:10px;color:var(--vscode-descriptionForeground);line-height:1.5}.footer button{border:0;background:transparent;color:var(--vscode-textLink-foreground);padding:0;font:inherit;text-decoration:underline;cursor:pointer}
+@media(min-width:520px){.overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}.stats{grid-template-columns:repeat(4,minmax(0,1fr))}.main-col,.side-col{display:grid;align-content:start;gap:10px}}
+@media(max-width:380px){body{padding:8px}.line{display:grid;gap:2px}.line .value{text-align:left}.actions{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:9px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="brand"><div class="mark" aria-hidden="true">J</div><div><h1>Jelo Co-Lab</h1><p>Collaborative workspace</p></div></header>
+  <section class="panel" aria-label="Connection status">
+    <div class="status-row"><div id="status" class="status disconnected" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="statusText">Disconnected</span></div><span id="role" class="pill">Not connected</span></div>
+    <div class="meta"><div class="line"><span>Workspace</span><span id="workspace" class="value">—</span></div><div class="line"><span>Server</span><span id="server" class="value">—</span></div><div class="line"><span>Account</span><span id="user" class="value">—</span></div><div class="line"><span>Latency</span><span id="latency" class="value">—</span></div></div>
+  </section>
+  <section class="stats" aria-label="Workspace summary" aria-live="polite">
+    <div class="stat"><strong id="peopleCount">0</strong><span>Collaborators</span></div><div class="stat"><strong id="queueCount">0</strong><span>Queued items</span></div><div class="stat"><strong id="transferCount">0</strong><span>Active transfers</span></div><div class="stat"><strong id="conflictCount">0</strong><span>Conflicts</span></div>
+  </section>
+  <div class="overview"><div class="main-col">
+    <section class="panel"><h2>Workspace actions</h2><div class="actions">
+      <button class="action primary" id="connectButton" data-command="collab.quickStart" title="Configure your server, workspace and invitation token" aria-label="Set up or connect">↗ <span id="connectLabel">Set up &amp; connect</span></button>
+      <button class="action" data-command="collab.pushDir" title="Choose files and synchronize them with the server" aria-label="Synchronize directory">⇅ Synchronize files</button>
+      <button class="action" data-command="collab.reconcile" title="Compare your local files with the server manifest" aria-label="Reconcile workspace">⟳ Reconcile workspace</button>
+      <button class="action" data-command="collab.conflicts" title="Review and resolve local/remote file conflicts" aria-label="Open conflict center">⚑ Conflict center <span id="conflictBadge"></span></button>
+      <button class="action" data-command="collab.retryPending" title="Retry queued edits and file operations" aria-label="Retry pending operations">↻ Retry pending</button>
+      <button class="action" data-command="collab.showDiagnostics" title="Copy connection, role, latency and queue diagnostics" aria-label="Show diagnostics">ⓘ Diagnostics</button>
+      <button class="action" id="pauseButton" data-command="collab.pauseTransfers" title="Pause outgoing and incoming file transfer processing" aria-label="Pause transfers">Ⅱ Pause transfers</button>
+      <button class="action" data-command="collab.openTutorial" title="Open the getting-started tutorial" aria-label="Open tutorial">▤ Tutorial</button>
+    </div></section>
+    <section class="panel"><h2>Transfer health</h2><div class="line"><span>Documents open</span><span id="documentCount" class="value">0</span></div><div class="line"><span>Failed transfers</span><span id="failedCount" class="value">0</span></div><div class="line"><span>Transfer mode</span><span id="transferMode" class="value">Active</span></div></section>
+  </div><div class="side-col">
+    <section class="panel"><h2>People in this workspace</h2><div id="people" class="list"><div class="empty">Connect to see your collaborators.</div></div></section>
+    <section class="panel"><h2>Need a hand?</h2><div class="footer">Start with the tutorial, then use Diagnostics when a connection or transfer needs attention. Your invitation token is stored in VS Code SecretStorage, not workspace settings.<br><br><button data-command="collab.openTutorial" title="Read the Jelo Co-Lab step-by-step guide">Read the setup guide</button></div></section>
+  </div></div>
+</div>
+<script nonce="${nonce}">
+const vscode=acquireVsCodeApi();
+const byId=(id)=>document.getElementById(id);
+function render(state){
+  if(!state)return;
+  byId("statusText").textContent=state.status;
+  byId("status").className="status "+String(state.status).toLowerCase();
+  byId("role").textContent=state.role;
+  byId("workspace").textContent=state.workspace;
+  byId("server").textContent=state.server;
+  byId("user").textContent=state.user;
+  byId("latency").textContent=state.latency===undefined?"Measuring":state.latency+" ms";
+  byId("peopleCount").textContent=String(state.status==="Connected"?(state.collaboratorCount||0)+1:0);
+  byId("queueCount").textContent=String(state.queued||0);
+  byId("transferCount").textContent=String(state.activeTransfers||0);
+  byId("conflictCount").textContent=String(state.conflicts||0);
+  byId("documentCount").textContent=String(state.documents||0);
+  byId("failedCount").textContent=String(state.failedTransfers||0);
+  byId("transferMode").textContent=state.paused?"Paused":"Active";
+  const connected=state.status==="Connected";
+  const connectButton=byId("connectButton");
+  byId("connectLabel").textContent=connected?"Disconnect":"Set up & connect";
+  connectButton.dataset.command=connected?"collab.disconnect":"collab.quickStart";
+  connectButton.title=connected?"Disconnect from this workspace without deleting queued local work":"Configure your server, workspace and invitation token";
+  connectButton.setAttribute("aria-label",connected?"Disconnect from workspace":"Set up or connect to workspace");
+  const pauseButton=byId("pauseButton");
+  pauseButton.dataset.command=state.paused?"collab.resumeTransfers":"collab.pauseTransfers";
+  pauseButton.textContent=state.paused?"▶ Resume transfers":"Ⅱ Pause transfers";
+  pauseButton.title=state.paused?"Resume queued incoming and outgoing file transfers":"Pause incoming and outgoing file transfers";
+  pauseButton.setAttribute("aria-label",state.paused?"Resume file transfers":"Pause file transfers");
+  byId("conflictBadge").textContent=state.conflicts?" ("+state.conflicts+")":"";
+  const people=state.collaborators||[];
+  const peopleNode=byId("people");
+  peopleNode.replaceChildren();
+  if(!people.length){
+    const empty=document.createElement("div");
+    empty.className="empty";
+    empty.textContent="No other collaborators connected yet.";
+    peopleNode.appendChild(empty);
+  } else {
+    for(const person of people){
+      const row=document.createElement("div"); row.className="person";
+      const avatar=document.createElement("div"); avatar.className="avatar";
+      avatar.textContent=String(person.id||"?").slice(0,1).toUpperCase();
+      avatar.style.background=/^#[0-9a-f]{6}$/i.test(person.color||"")?person.color:"var(--vscode-button-background)";
+      const main=document.createElement("div"); main.className="person-main";
+      const name=document.createElement("div"); name.className="person-name"; name.textContent=String(person.id||"Unknown");
+      const files=document.createElement("div"); files.className="person-files"; files.textContent=(person.files||[]).join(" · ")||"Connected";
+      main.append(name,files); row.append(avatar,main); peopleNode.appendChild(row);
+    }
+  }
+}
+document.addEventListener("click",event=>{const button=event.target.closest("[data-command]");if(button){vscode.postMessage({type:"command",command:button.dataset.command});}});
+window.addEventListener("message",event=>{if(event.data?.type==="state")render(event.data.state);});
+vscode.postMessage({type:"ready"});
+</script>
+</body>
+</html>`;
+  }
+}
+
 let collaboratorProvider: CoLabTreeProvider;
 let transferProvider: CoLabTreeProvider;
 let conflictProvider: CoLabTreeProvider;
-function refreshViews(): void { collaboratorProvider?.refresh(); transferProvider?.refresh(); conflictProvider?.refresh(); }
+function refreshViews(): void {
+  collaboratorProvider?.refresh();
+  transferProvider?.refresh();
+  conflictProvider?.refresh();
+  dashboardProvider?.refresh();
+}
+
+function getDashboardState() {
+  const config = getConfig();
+  let serverLabel = config.serverUrl;
+  try {
+    const parsed = new URL(config.serverUrl);
+    serverLabel = `${parsed.protocol}//${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+  } catch { /* Keep the configured value visible for diagnostics. */ }
+  const transfers = Array.from(transferStates.values());
+  return {
+    status: connectionState,
+    server: serverLabel,
+    workspace: config.workspaceId,
+    user: config.userId,
+    role: currentRole || "Not connected",
+    latency: latencyMs,
+    collaboratorCount: collaborators.size,
+    collaborators: Array.from(collaborators, ([id, color]) => ({ id, color, files: Array.from(collaboratorFiles.get(id) || []) })),
+    queued: pendingFilePaths.size + pendingFileOperations.length + Array.from(documents.values()).filter((session) => session.pending.length > 0).length,
+    activeTransfers: transfers.filter((item) => ["Preparing", "Uploading", "Downloading"].includes(item.state)).length,
+    failedTransfers: transfers.filter((item) => item.state === "Failed").length,
+    conflicts: conflicts.size,
+    documents: documents.size,
+    paused: transferPaused,
+  };
+}
 
 function getConfig() {
   const config = vscode.workspace.getConfiguration("collab");
@@ -311,6 +481,7 @@ async function retryPendingFiles(): Promise<void> {
 }
 
 function updateStatusBar(status: "Disconnected" | "Connecting" | "Connected" = "Disconnected") {
+  connectionState = status;
   const { workspaceId, serverUrl } = getConfig();
   workspaceStatusBar.text = `$(folder) ${workspaceId}`;
   workspaceStatusBar.tooltip = `Server: ${serverUrl}`;
@@ -324,6 +495,7 @@ function updateStatusBar(status: "Disconnected" | "Connecting" | "Connected" = "
     : `Jelo Co-Lab: ${status}. Click to configure or connect.`;
   connectionStatusBar.command = status === "Connected" ? "collab.disconnect" : "collab.quickStart";
   connectionStatusBar.show();
+  dashboardProvider?.refresh();
 }
 
 function sendMessage(payload: object): void {
@@ -1509,7 +1681,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   collaboratorProvider = new CoLabTreeProvider("collaborators");
   transferProvider = new CoLabTreeProvider("transfers");
   conflictProvider = new CoLabTreeProvider("conflicts");
+  dashboardProvider = new DashboardViewProvider(context);
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("jelo.dashboard", dashboardProvider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerTreeDataProvider("jelo.collaborators", collaboratorProvider),
     vscode.window.registerTreeDataProvider("jelo.transfers", transferProvider),
     vscode.window.registerTreeDataProvider("jelo.conflicts", conflictProvider),
@@ -1520,6 +1694,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("collab.start", connect),
     vscode.commands.registerCommand("collab.setConfig", setConfig),
     vscode.commands.registerCommand("collab.quickStart", () => vscode.commands.executeCommand("collab.onboarding")),
+    vscode.commands.registerCommand("collab.openTutorial", async () => {
+      const tutorial = vscode.Uri.joinPath(extensionContext.extensionUri, "TUTORIAL.md");
+      try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(tutorial), { preview: true }); }
+      catch { vscode.window.showInformationMessage("Open the Jelo Co-Lab extension README for setup instructions."); }
+    }),
     vscode.commands.registerCommand("collab.showCollaboratorFiles", (userId: string) => showCollaboratorFiles(userId)),
     vscode.commands.registerCommand("collab.disconnect", disconnect),
     vscode.commands.registerCommand("collab.pushDir", syncWorkspace),

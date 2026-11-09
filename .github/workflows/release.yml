@@ -145,11 +145,13 @@ jobs:
       - name: Package server and checksums
         run: |
           mkdir -p dist/server/scripts
-          cp server/index.js server/security.js server/ot.js server/access.js server/manage-access.js server/package.json server/package-lock.json server/README.md dist/server/
+          cp server/index.js server/security.js server/ot.js server/access.js server/manage-access.js server/manager.js server/package.json server/package-lock.json server/README.md dist/server/
           cp -R server/tests dist/server/tests
-          cp scripts/backup-server.sh scripts/restore-server.sh scripts/configure-caddy.sh scripts/install-backup-timer.sh scripts/refresh-ws-lockfile.cjs dist/server/scripts/
+          cp scripts/install-server.sh scripts/backup-server.sh scripts/restore-server.sh scripts/configure-caddy.sh scripts/install-backup-timer.sh scripts/server-manager.sh scripts/server-setup.sh scripts/refresh-ws-lockfile.cjs dist/server/scripts/
           cp LICENSE SECURITY.md dist/server/
           chmod +x dist/server/scripts/*.sh
+          node --check dist/server/manager.js
+          bash -n dist/server/scripts/*.sh
           (cd dist && zip -X -r "jelo-colab-server-${GITHUB_REF_NAME}.zip" server)
           unzip -t "dist/jelo-colab-server-${GITHUB_REF_NAME}.zip"
           sha256sum "dist/jelo-colab-server-${GITHUB_REF_NAME}.zip" > "dist/jelo-colab-server-${GITHUB_REF_NAME}.zip.sha256"

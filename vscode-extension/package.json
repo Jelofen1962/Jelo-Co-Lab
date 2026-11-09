@@ -1,8 +1,8 @@
 {
   "name": "jelofen-co-lab",
-  "displayName": "Jelofen's Co-lab",
-  "description": "Self-hosted collaborative editing with OT, workspace reconciliation, presence and reliable transfer queues",
-  "version": "1.7.14",
+  "displayName": "Jelo Co-Lab",
+  "description": "Self-hosted live collaboration and workspace synchronization for Visual Studio Code",
+  "version": "1.8.0",
   "publisher": "jelofen",
   "engines": {
     "vscode": "^1.85.0"
@@ -24,7 +24,9 @@
     "onStartupFinished",
     "onCommand:collab.leaveWorkspace",
     "onCommand:collab.conflicts",
-    "onCommand:collab.setConfig"
+    "onCommand:collab.setConfig",
+    "onCommand:collab.openTutorial",
+    "onView:jelo.dashboard"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -84,6 +86,10 @@
       {
         "command": "collab.showCollaboratorFiles",
         "title": "Jelo Co-Lab: Show Collaborator Documents"
+      },
+      {
+        "command": "collab.openTutorial",
+        "title": "Jelo Co-Lab: Open Setup Tutorial"
       }
     ],
     "configuration": {
@@ -132,6 +138,10 @@
     "views": {
       "jelo-colab": [
         {
+          "id": "jelo.dashboard",
+          "name": "Overview"
+        },
+        {
           "id": "jelo.collaborators",
           "name": "Collaborators"
         },
@@ -146,6 +156,10 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "jelo.dashboard",
+        "contents": "Welcome to Jelo Co-Lab. [Set up your workspace](command:collab.onboarding) or [read the tutorial](command:collab.openTutorial)."
+      },
       {
         "view": "jelo.collaborators",
         "contents": "Connect to a workspace to see collaborators and the documents they are editing. [Set up Jelo Co-Lab](command:collab.onboarding)"
@@ -190,6 +204,21 @@
           "command": "collab.conflicts",
           "when": "view == jelo.conflicts",
           "group": "navigation"
+        },
+        {
+          "command": "collab.quickStart",
+          "when": "view == jelo.dashboard",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.reconcile",
+          "when": "view == jelo.dashboard",
+          "group": "navigation"
+        },
+        {
+          "command": "collab.openTutorial",
+          "when": "view == jelo.dashboard",
+          "group": "navigation"
         }
       ]
     }
@@ -218,5 +247,13 @@
     "url": "https://github.com/Jelofen1962/Jelo-Co-Lab/issues"
   },
   "homepage": "https://github.com/Jelofen1962/Jelo-Co-Lab#readme",
-  "license": "MIT"
+  "license": "MIT",
+  "keywords": [
+    "collaboration",
+    "co-editing",
+    "self-hosted",
+    "workspace sync",
+    "team development",
+    "websocket"
+  ]
 }

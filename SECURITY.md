@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes target the latest tagged release (`v1.7.x` at the time of this document). Older versions may not receive fixes; upgrade before requesting security support.
+Security fixes target the latest tagged release (`v1.8.x` at the time of this document). Older versions may not receive fixes; upgrade before requesting security support.
 
 ## Reporting a vulnerability
 

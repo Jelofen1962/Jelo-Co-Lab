@@ -13,6 +13,8 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 command -v apt-get >/dev/null 2>&1 || { echo "Supported platforms: Ubuntu/Debian with apt-get." >&2; exit 1; }
+command -v systemctl >/dev/null 2>&1 || { echo "The server installer requires systemd (systemctl)." >&2; exit 1; }
+[[ -d /run/systemd/system ]] || { echo "systemd is not running. Use a supported Ubuntu/Debian host with systemd enabled." >&2; exit 1; }
 
 install -d -m 0755 /var/log
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -135,6 +137,10 @@ rm -rf "$INSTALL_DIR/node_modules"
 cp -a "$TMP/extracted/server/." "$INSTALL_DIR/"
 chown -R root:root "$INSTALL_DIR"
 chmod -R a+rX "$INSTALL_DIR"
+if [[ -f "$INSTALL_DIR/manager.js" && -f "$INSTALL_DIR/scripts/server-manager.sh" ]]; then
+  install -m 0755 "$INSTALL_DIR/scripts/server-manager.sh" /usr/local/bin/jelo-colab
+  log "Installed interactive server manager: sudo jelo-colab"
+fi
 
 umask 077
 printf 'COLLAB_TOKEN=%s\nHOST=127.0.0.1\nPORT=3000\nDATA_DIR=%s\n' "$TOKEN" "$DATA_DIR" > /etc/jelo-colab.env

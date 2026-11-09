@@ -26,6 +26,8 @@ jobs:
           npm ci
       - working-directory: server
         run: npm run check
+      - name: Validate server setup scripts
+        run: bash -n scripts/server-setup.sh scripts/server-manager.sh scripts/install-server.sh scripts/backup-server.sh scripts/restore-server.sh scripts/configure-caddy.sh scripts/install-backup-timer.sh
       - working-directory: server
         run: npm test
       - working-directory: server

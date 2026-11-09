@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.0] - Documentation, onboarding, server management TUI and responsive extension dashboard
+
+- Replaced the short project README with a full GitHub project guide covering architecture, security model, setup, roles, synchronization, limits, development and releases.
+- Added a dedicated Visual Studio Marketplace listing README and a detailed server operations README.
+- Added an end-to-end user tutorial for administrators and contributors.
+- Added a guided Ubuntu/Debian zero-to-hero setup wizard with active-systemd preflight, TTY-safe whiptail dialogs, non-interactive environment mode, staged install/test, initial workspace admin invitation, health verification, LAN/public-IP reporting and optional Caddy TLS setup.
+- Added a clean dependency-free terminal management interface for health/status, logs, service control, member management, backup/restore, TLS, network addresses and diagnostics; added a smoke test for its dashboard and exit path.
+- Added a responsive VS Code Overview webview with connection, role, latency, collaborator, queue, transfer and conflict summaries, command actions, keyboard focus states, accessible live status, contextual dynamic tooltips and responsive compact/wide layouts.
+- Added a regression test for the dashboard's responsive breakpoints, accessibility markers, changing action tooltips and packaged tutorial.
+- Extended Extension Host tests for the dashboard view and tutorial command; retained Windows and Ubuntu as the supported client targets.
+
 ## [1.7.14] - Fix VSIX license assertion
 
 - Fixed the release workflow check to match VS Code packaging output (`extension/LICENSE.txt`).

@@ -1,6 +1,6 @@
 {
   "name": "jelofen-co-lab-server",
-  "version": "1.7.14",
+  "version": "1.8.0",
   "private": true,
   "description": "Self-hosted WebSocket server for Jelo Co-Lab",
   "main": "index.js",
@@ -10,8 +10,9 @@
   },
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check security.js && node --check ot.js && node --check access.js && node --check manage-access.js",
-    "test": "node --test --test-concurrency=1"
+    "check": "node --check index.js && node --check security.js && node --check ot.js && node --check access.js && node --check manage-access.js && node --check manager.js",
+    "test": "node --test --test-concurrency=1",
+    "manage": "node manager.js"
   },
   "dependencies": {
     "ws": "8.22.1"

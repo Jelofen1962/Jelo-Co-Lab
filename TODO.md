@@ -1,6 +1,6 @@
 # Jelo Co-Lab delivery status and remaining TODO
 
-Version: 1.7.14
+Version: 1.8.0
 
 This checklist distinguishes implemented work from release gates that require a real external environment. A checked implementation item does not mean the Windows and Ubuntu GitHub workflow or an independent security review has already run.
 
@@ -14,6 +14,8 @@ This checklist distinguishes implemented work from release gates that require a 
 - [x] Require secure transport for non-local servers.
 - [x] Safe sync exclusions and file-size limits.
 - [x] Linux systemd deployment and diagnostics.
+- [x] Guided Ubuntu/Debian setup wizard with staged checks, first admin invitation, network reporting and optional TLS.
+- [x] Terminal server manager for status, logs, service actions, members, backups, restore and diagnostics.
 - [x] GitHub VSIX/server ZIP release workflow and checksums.
 
 ## Phase 2 — Synchronization engine
@@ -31,6 +33,9 @@ This checklist distinguishes implemented work from release gates that require a 
 ## Phase 3 — Product experience and offline recovery
 
 - [x] First-run onboarding and connection test.
+- [x] Responsive Overview dashboard webview with status and activity summary.
+- [x] Accessible dashboard actions with tooltips and keyboard focus styles.
+- [x] Extension-packaged getting-started tutorial command.
 - [x] Collaborator, transfer queue and conflict tree views.
 - [x] Connection role/latency diagnostics.
 - [x] Pause/resume and retry transfer controls.
@@ -59,7 +64,7 @@ This checklist distinguishes implemented work from release gates that require a 
 - [x] CI workflow for server checks and Windows and Ubuntu VS Code Extension Host tests (macOS intentionally unsupported).
 - [x] Release workflow with package-version gate, audit, VSIX/server ZIP, checksums and build provenance.
 - [x] MIT license, contribution guide, support guide and security policy.
-- [ ] Run GitHub CI on all three operating systems and retain passing run links.
+- [ ] Run GitHub CI on both supported operating systems (Windows and Ubuntu) and retain passing run links.
 - [ ] Run a release-tag workflow and verify actual VSIX installation in clean VS Code profiles.
 - [ ] Deploy to a real Linux host behind a real domain/TLS proxy; verify install, reboot, backup and restore.
 - [ ] Perform an independent security review / penetration test before broad public production use.
@@ -94,3 +99,17 @@ This checklist distinguishes implemented work from release gates that require a 
 - [x] Require genuine npm `sha512` integrity metadata before audit, install, and publication.
 - [x] Include the lock refresh helper in the standalone server release archive.
 - [ ] Confirm online `npm ci` and production audit pass in GitHub Actions on Windows and Ubuntu.
+
+
+## v1.8.0 documentation and admin experience
+
+- [x] Full GitHub README.
+- [x] Marketplace-ready extension README.
+- [x] Detailed server operations README.
+- [x] Administrator/contributor user tutorial.
+- [x] Zero-to-hero Ubuntu/Debian setup wizard.
+- [x] Server manager TUI and `sudo jelo-colab` command.
+- [x] Responsive VS Code Overview dashboard with tooltips and accessible interactions.
+- [ ] Run Windows and Ubuntu Extension Host workflows on the tagged release.
+- [ ] Exercise the guided setup, Caddy issuance, and TUI on a real disposable Ubuntu/Debian host.
+- [ ] Validate a Marketplace listing preview and screenshots before submission.
