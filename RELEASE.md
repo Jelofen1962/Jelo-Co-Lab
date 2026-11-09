@@ -5,8 +5,8 @@ This repository supports Windows and Ubuntu CI targets only.
 Before committing a release, run the following from the repository root (with access to the public npm registry):
 
 ```bash
-node scripts/prepare-release.cjs v1.7.13
-node scripts/verify-release-version.cjs v1.7.13
+node scripts/prepare-release.cjs v1.7.14
+node scripts/verify-release-version.cjs v1.7.14
 (cd server && npm ci)
 (cd vscode-extension && npm ci)
 ```
@@ -17,8 +17,8 @@ Then commit the changed manifests and lockfiles and push the matching tag:
 
 ```bash
 git add -A
-git commit -m "Prepare release v1.7.13"
-git tag v1.7.13
+git commit -m "Prepare release v1.7.14"
+git tag v1.7.14
 git push origin main --tags
 ```
 

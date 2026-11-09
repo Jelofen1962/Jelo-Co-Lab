@@ -1,6 +1,6 @@
 # Jelo Co-Lab
 
-> v1.7.13 is a release-only correction: package versions and lockfile roots are aligned with the tag, `ws` is pinned to 8.22.1, and the release verifier obtains the actual tarball URL and SHA-512 integrity directly from the official npm registry. The VSIX build keeps TypeScript available through VSCE prepublish, avoids pruning development dependencies before packaging, and verifies that development tooling is excluded from the final VSIX. No application behavior changes.
+> v1.7.14 is a release-only correction: package versions and lockfile roots are aligned with the tag, `ws` is pinned to 8.22.1, and the release verifier obtains the actual tarball URL and SHA-512 integrity directly from the official npm registry. The VSIX build keeps TypeScript available through VSCE prepublish, avoids pruning development dependencies before packaging, and verifies that development tooling is excluded from the final VSIX. No application behavior changes.
 
 Self-hosted collaborative editing for Visual Studio Code. The product functionality from v1.7.0 remains unchanged in this release-only patch. The release pipeline now checks server and extension package versions against the tag, verifies lockfile dependency graphs, refreshes registry integrity metadata before clean installs, and gates releases on Windows and Ubuntu Extension Host tests.
 
@@ -30,7 +30,7 @@ The installer generates a strong server bootstrap token on a fresh install, reus
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.13 bash
+curl -fsSL https://raw.githubusercontent.com/Jelofen1962/Jelo-Co-Lab/main/scripts/install-server.sh | sudo env JELO_VERSION=v1.7.14 bash
 ```
 
 To provide your own bootstrap token on a fresh install:
@@ -115,7 +115,7 @@ Tokens are stored as salted scrypt hashes in `/var/lib/jelo-colab/access.json`. 
 
 ## Install the VS Code extension
 
-1. Download `jelofen-co-lab-v1.7.13.vsix` from the GitHub Release.
+1. Download `jelofen-co-lab-v1.7.14.vsix` from the GitHub Release.
 2. In VS Code, open **Extensions** (`Ctrl+Shift+X`).
 3. Select `...` → **Install from VSIX...** and choose the downloaded file.
 4. Open a file inside a workspace.
@@ -251,7 +251,7 @@ The refresh helper queries `npm view ws@8.22.1 dist --json` against the official
 Before creating a release tag, refresh both lockfiles and verify that both packages match the intended tag. The release workflow performs the same sequence automatically before building:
 
 ```bash
-node scripts/prepare-release.cjs v1.7.13
-node scripts/verify-release-version.cjs v1.7.13
+node scripts/prepare-release.cjs v1.7.14
+node scripts/verify-release-version.cjs v1.7.14
 ```
 

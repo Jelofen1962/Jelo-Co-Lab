@@ -62,4 +62,4 @@ Use a reverse proxy with TLS/WSS, keep `DATA_DIR` writable only by the service a
 
 ## Release version
 
-This package is released with Jelo Co-Lab v1.7.13. The repository release preflight checks both package manifests and lockfile roots against the Git tag before packaging. The WebSocket runtime is pinned to 8.22.1.
+This package is released with Jelo Co-Lab v1.7.14. The repository release preflight checks both package manifests and lockfile roots against the Git tag before packaging. The WebSocket runtime is pinned to 8.22.1.

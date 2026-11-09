@@ -2,7 +2,7 @@
   "name": "jelofen-co-lab",
   "displayName": "Jelofen's Co-lab",
   "description": "Self-hosted collaborative editing with OT, workspace reconciliation, presence and reliable transfer queues",
-  "version": "1.7.13",
+  "version": "1.7.14",
   "publisher": "jelofen",
   "engines": {
     "vscode": "^1.85.0"

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.14] - Fix VSIX license assertion
+
+- Fixed the release workflow check to match VS Code packaging output (`extension/LICENSE.txt`).
+- Added diagnostic output showing license entries when VSIX validation fails.
+- No extension or server runtime behavior changed.
+
+
 ## [1.7.13] - Fix VSIX packaging lifecycle
 
 - Keep TypeScript and other development dependencies installed until VSCE completes the `vscode:prepublish` lifecycle hook.

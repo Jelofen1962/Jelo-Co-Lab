@@ -131,7 +131,11 @@ jobs:
           npx --yes @vscode/vsce package --out "jelofen-co-lab-${GITHUB_REF_NAME}.vsix"
           test -s "jelofen-co-lab-${GITHUB_REF_NAME}.vsix"
           unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -qx 'extension/node_modules/ws/package.json'
-          unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -qx 'extension/LICENSE'
+          if ! unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -qx 'extension/LICENSE.txt'; then
+            echo 'Expected extension/LICENSE.txt in VSIX. Found license entries:' >&2
+            unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -i 'license' >&2 || true
+            exit 1
+          fi
           # VSCE must include production dependencies but not TypeScript dev tooling.
           if unzip -Z1 "jelofen-co-lab-${GITHUB_REF_NAME}.vsix" | grep -q '^extension/node_modules/typescript/'; then
             echo 'TypeScript devDependency leaked into VSIX' >&2
